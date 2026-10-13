@@ -14,6 +14,56 @@ from test_runtime_fixture import runtime as verified_runtime
 PREFIX = 'usr/local/lib/node_modules/@deepseek-ai/dsh'
 
 
+def verify_ubuntu_tools(apk, lock, lock_sha256, expected_archive_sha256):
+    layout = apk.read('assets/ubuntu-tools.layout').strip()
+    require(layout in (b'deb-install-v1', b'configured-overlay-v1'), 'Ubuntu 工具布局未知')
+    digest = hashlib.sha256()
+    with apk.open('assets/ubuntu-tools.bin') as stream:
+        for block in iter(lambda: stream.read(1048576), b''):
+            digest.update(block)
+    require(digest.hexdigest() == expected_archive_sha256, 'APK Ubuntu 工具归档与源不符')
+    if layout == b'configured-overlay-v1':
+        manifest = json.loads(apk.read('assets/ubuntu-tools.manifest.json'))
+        require(manifest.get('schema') == 1
+                and manifest.get('archiveSha256') == digest.hexdigest()
+                and manifest.get('packageLockSha256') == lock_sha256
+                and manifest.get('packages') == len(lock['packages']), 'Ubuntu 工具制备证明不符')
+        found = {}
+        with apk.open('assets/ubuntu-tools.bin') as stream, tarfile.open(fileobj=stream, mode='r|gz') as tools:
+            for member in tools:
+                name = member.name.removeprefix('./')
+                if name not in ('var/lib/dpkg/status', 'root/.dsha-ubuntu-tools-version'):
+                    continue
+                require(member.isfile() and name not in found and member.size <= 16 * 1024 * 1024,
+                        'Ubuntu 工具状态成员无效')
+                found[name] = tools.extractfile(member).read()
+        require(set(found) == {'var/lib/dpkg/status', 'root/.dsha-ubuntu-tools-version'}, 'Ubuntu 工具状态缺失')
+        require(found['root/.dsha-ubuntu-tools-version'].decode('ascii').strip() == lock_sha256,
+                'Ubuntu 工具版本标记不符')
+        status = found['var/lib/dpkg/status']
+        require(hashlib.sha256(status).hexdigest() == manifest.get('statusSha256'), 'Ubuntu dpkg 状态摘要不符')
+        packages = {}
+        for paragraph in status.decode('utf-8').split('\n\n'):
+            row = dict(line.split(': ', 1) for line in paragraph.splitlines()
+                       if ': ' in line and not line.startswith(' '))
+            if 'Package' in row:
+                require(row['Package'] not in packages, 'Ubuntu dpkg 包记录重复')
+                packages[row['Package']] = row
+        for row in lock['packages']:
+            actual = packages.get(row['Package'], {})
+            require(actual.get('Version') == row['Version'] and actual.get('Status') == 'install ok installed',
+                    'Ubuntu 工具未按锁完成配置：' + row['Package'])
+        return
+    packages = {Path(row['Filename']).name: row['SHA256'] for row in lock['packages']}
+    with apk.open('assets/ubuntu-tools.bin') as stream, tarfile.open(fileobj=stream, mode='r|gz') as tools:
+        for member in tools:
+            if member.name.endswith('.deb'):
+                require(member.isfile() and member.name in packages, '离线工具归档存在未知软件包')
+                require(hashlib.sha256(tools.extractfile(member).read()).hexdigest() == packages.pop(member.name),
+                        'Ubuntu deb 摘要不符')
+    require(not packages, 'APK 缺少锁定的 Ubuntu 软件包')
+
+
 def verify_builtin_plugins(apk, expected):
     registry = json.loads(apk.read('assets/builtin-plugins.json'))
     require(registry == expected and registry.get('schema') == 1, 'APK 内置插件名单与签名源不符')
@@ -131,14 +181,10 @@ def verify(path):
         require((not legacy_workflow_aliases), '缺少旧工作流包名兼容链接：' + str(legacy_workflow_aliases))
         require((aliases > 100), '缺少共享依赖别名')
         require((expanded == int(apk.read('assets/offline-rootfs.bytes'))), 'VERIFICATION_FAILED')
-        tools_lock = json.loads((Path(__file__).resolve().parent / 'ubuntu-tools/packages.lock.json').read_text())
-        packages = {Path(row['Filename']).name: row['SHA256'] for row in tools_lock['packages']}
-        with apk.open('assets/ubuntu-tools.bin') as stream, tarfile.open(fileobj=stream, mode='r|gz') as tools:
-            for member in tools:
-                if member.name.endswith('.deb'):
-                    require((member.isfile() and member.name in packages), '离线工具归档存在未知软件包')
-                    require((hashlib.sha256(tools.extractfile(member).read()).hexdigest() == packages.pop(member.name)), 'VERIFICATION_FAILED')
-        require((not packages), 'APK 缺少锁定的 Ubuntu 软件包')
+        tools_lock_file = root / 'tools/ubuntu-tools/packages.lock.json'
+        tools_lock = json.loads(tools_lock_file.read_text())
+        verify_ubuntu_tools(apk, tools_lock, hashlib.sha256(tools_lock_file.read_bytes()).hexdigest(),
+                           hashlib.sha256((root / 'app/src/main/assets/ubuntu-tools.bin').read_bytes()).hexdigest())
         require((b'dpkg --configure' in apk.read('assets/install-ubuntu-tools.sh')), 'VERIFICATION_FAILED')
         plugins = verify_builtin_plugins(
             apk, json.loads((root / 'app/src/main/assets/builtin-plugins.json').read_text(encoding='utf-8')))

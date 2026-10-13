@@ -4,7 +4,7 @@ plugins {
 
 // 两版共用功能和离线环境；只有 low 携带兼容旧 Android 的 Gecko 内核。
 // 文件名独立于可诊断版本名，保持当前用户下载入口不变。
-ext.dshaApkNameVersion = '0.2.0-rc2'
+ext.dshaApkNameVersion = '0.2.0-rc2.1'
 def bundledTools = new groovy.json.JsonSlurper().parse(rootProject.file('tools/runtime-tools.lock.json'))
 if (bundledTools.schema != 1 || !(bundledTools.pnpm.version ==~ /[0-9]+\.[0-9]+\.[0-9]+/))
     throw new GradleException('随包工具身份格式错误')
@@ -23,9 +23,9 @@ android {
         minSdk 30
         targetSdk 37
         buildConfigField 'String', 'BUNDLED_PNPM_VERSION', '"' + bundledTools.pnpm.version + '"'
-        versionCode 170
+        versionCode 171
         // DSHA 修订号 + 固定的北京时间戳 + 内置 DSH 版本；同一交付重建不变。
-        versionName "0.2.21-20261009.0750-dsh0.2.0-rc.2"
+        versionName "0.2.22-20261013.1248-dsh0.2.0-rc.2"
         testInstrumentationRunner project.findProperty('dsha.testRunner') ?: "com.deepseekharness.app.Rc13Instrumentation"
         ndk {
             abiFilters 'arm64-v8a'
@@ -174,7 +174,7 @@ tasks.withType(Test).configureEach {
 }
 tasks.configureEach {
     if (name in ['verifyBundledIdentities', 'verifyBuiltinRegistry', 'prepareStandardAssets',
-                 'prepareBackupAssets', 'prepareRuntimeDescriptor', 'prepareRecoveryAssets', 'prepareUiLanguages'])
+                 'prepareBackupAssets', 'preparePortableTools', 'prepareRuntimeDescriptor', 'prepareRecoveryAssets', 'prepareUiLanguages'])
         inputs.file(rootProject.file('tools/source_text.py'))
 }
 
@@ -196,6 +196,19 @@ def prepareStandardAssets = tasks.register("prepareStandardAssets", Exec) {
             "--source", file("src/main/assets").absolutePath,
             "--output", layout.buildDirectory.dir("generated/standardAssets").get().asFile.absolutePath)
 }
+
+def preparePortableTools = tasks.register("preparePortableTools", Exec) {
+    inputs.files(fileTree(rootProject.file('tools/pc-migration')) {
+        exclude 'node_modules/**', '**/__pycache__/**', '**/*.pyc'
+    })
+    outputs.dir(file('src/main/assets/pc-migration'))
+    outputs.file(file('src/main/assets/dsha-portable'))
+    outputs.file(file('src/main/assets/portable-tools.manifest.json'))
+    commandLine(System.getenv('DSHA_PYTHON') ?: 'python3', '-B',
+            rootProject.file('tools/pc-migration/prepare-assets.py').absolutePath,
+            '--output', file('src/main/assets').absolutePath)
+}
+prepareStandardAssets.configure { dependsOn(preparePortableTools) }
 def prepareBackupAssets = tasks.register("prepareBackupAssets", Exec) {
     inputs.file(rootProject.file("tools/prepare-backup-assets.py"))
     inputs.file(file("src/main/assets/dsh-runtime.bin"))
@@ -224,6 +237,7 @@ def prepareRuntimeDescriptor = tasks.register("prepareRuntimeDescriptor", Exec) 
     commandLine(System.getenv("DSHA_PYTHON") ?: "python3", "-B", rootProject.file("tools/prepare-runtime-descriptor.py").absolutePath, "--check")
 }
 def verifyRuntimeDescriptorInputs = tasks.register("verifyRuntimeDescriptorInputs", Exec) {
+    dependsOn(preparePortableTools)
     inputs.file(rootProject.file("tools/test-runtime-descriptor-inputs.py"))
     inputs.file(rootProject.file("tools/prepare-runtime-descriptor.py"))
     inputs.file(rootProject.file("tools/runtime_input_contract.py"))

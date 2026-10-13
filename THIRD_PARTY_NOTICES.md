@@ -9,6 +9,7 @@
 - pnpm **10.34.5**（MIT）和 certifi **2026.7.22**（MPL-2.0）：版本和原包摘要由 `tools/runtime-tools.lock.json` 固定。CA 未关闭 TLS 核验。
 - 许可目录和实际依赖需结合归档成员检查；锁文件内其他平台可选依赖不等于已进入 arm64 APK。
 - core-js **3.50.0**（MIT），原包来源 `https://registry.npmjs.org/core-js/-/core-js-3.50.0.tgz`，全文为 `assets/web-integration/core-js.LICENSE`。
+- 便携迁移 CLI 单独携带 yaml **2.9.1**（ISC）；来源 `https://registry.npmjs.org/yaml/-/yaml-2.9.1.tgz`，完整原包按 `tools/pc-migration/package-lock.json` 的 SHA-512 锁定，许可保留在 `assets/pc-migration/node_modules/yaml/LICENSE`。宿主准备不运行安装钩子，手机运行不重新解析依赖。
 - sharp **0.35.5** 为 Apache-2.0；arm64 libvips 包 **1.3.4** 声明 LGPL-3.0-or-later，来源为锁内 npm 原包和 https://github.com/lovell/sharp-libvips 。包内 README 含嵌入依赖及源码获取说明，应结合实际二进制核对；不把单一 libvips 许可扩展到所有嵌入库。
 - `@ubjs/core` / `@ubjs/node` **0.31.0-3** 为 MPL-2.0，来源 https://github.com/jhugman/uniffi-bindgen-react-native ；`@trycua/cua-driver` **0.28.0** 包装层为 MIT，而 Linux arm64 原生包为 **MIT AND MPL-2.0**，来源 https://github.com/trycua/cua 。原生包声明与包装层分开核对。
 - MPL-2.0、LGPL-3.0 与 GPL-3.0 全文随 `assets/licenses` 提供；文本精确来源与摘要记录在 `docs/audits/build156/third-party-license-sources.json`。通用许可全文不能证明二进制原件的来源或分发权利。
@@ -19,7 +20,7 @@
 - 上游 client 摘要 `1403ab28a1f3478c2a7a11236830f242140e2de7463b7ccb384e469e93bd3ffa`；本地差异由 `tools/apply-mobile-client-patches.mjs` 与 `tools/mobile-server/` 管理。不是未修改的上游产物。
 - 许可全文：`app/src/main/assets/builtin-plugins/dsh-web-mobile/LICENSE`。当前产物摘要：
 
-- `client.js`：`a5991fe7b504da60c974b819d546ee25718d605e0fba3ec068432a76d6808b62`
+- `client.js`：`c12d1fe377191538d7c6cd19353bd9082f6e4f5f45cc420b1c4fd69e204822c2`
 - `index.js`：`607ea57134e8772fa5e9bb1778c556703ba21191f8ef198ec278b764f945797a`
 - `compress.js`：`f5902f4f036d0f7a67d2ce6e4c71b01a98227cb4365abde7a4bf8f1bf5e6de0c`
 - `delete-session.js`：`f4f8caf0fd54ab49ad264908296b12d9d46868542b082136927afe3c21d32b19`

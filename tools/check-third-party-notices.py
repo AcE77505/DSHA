@@ -1,5 +1,6 @@
 """Check current declarations and license bytes; never assert legal provenance."""
 import argparse
+import base64
 import hashlib
 import importlib.util
 import json
@@ -32,6 +33,16 @@ def verify_licenses(root=ROOT):
     if {row['target'] for row in evidence['licenses']} != {
             'app/src/main/assets/licenses/LGPL-3.0.txt', 'app/src/main/assets/licenses/MPL-2.0.txt'}:
         raise ValueError('THIRD_PARTY_LICENSE_SOURCE_MISSING')
+    lock = json.loads((root / 'tools/pc-migration/package-lock.json').read_text(encoding='utf-8'))['packages']['node_modules/yaml']
+    vendor = root / 'tools/pc-migration/vendor/yaml-2.9.1.tgz'
+    expected = 'sha512-' + base64.b64encode(hashlib.sha512(vendor.read_bytes()).digest()).decode()
+    if expected != lock['integrity']:
+        raise ValueError('PORTABLE_YAML_SOURCE_INTEGRITY')
+    with tarfile.open(vendor, 'r:gz') as source:
+        original = source.extractfile('package/LICENSE').read()
+    copied = root / 'app/src/main/assets/pc-migration/node_modules/yaml/LICENSE'
+    if not copied.is_file() or copied.read_bytes() != original:
+        raise ValueError('PORTABLE_YAML_LICENSE_CHANGED')
 
 
 def verify_native_members(root=ROOT):

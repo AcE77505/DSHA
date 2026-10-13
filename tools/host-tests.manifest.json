@@ -1651,6 +1651,266 @@
       ],
       "environment": {},
       "cli": "--jdk <JDK17 directory> --fixture <runner-owned directory>; missing locked JARs are fetched from Maven Central and checked by SHA256. The legacy single fixture argument remains an optional compound mode."
+    },
+    {
+      "path": "tools/test-mobile-reasoning-defaults.mjs",
+      "stage": "fast",
+      "reason": "Current isolated software regression; no device actions",
+      "args": [],
+      "timeoutSeconds": 900,
+      "requires": [
+        "node24"
+      ],
+      "environment": {},
+      "cli": "Explicit current software fixture inputs"
+    },
+    {
+      "path": "tools/test-mobile-refresh.mjs",
+      "stage": "runtime",
+      "reason": "Current isolated software regression; no device actions",
+      "args": [],
+      "timeoutSeconds": 900,
+      "requires": [
+        "node24",
+        "raw",
+        "browser"
+      ],
+      "environment": {},
+      "cli": "Explicit current software fixture inputs"
+    },
+    {
+      "path": "tools/test-web-file-actions.mjs",
+      "stage": "runtime",
+      "reason": "Current isolated software regression; no device actions",
+      "args": [],
+      "timeoutSeconds": 900,
+      "requires": [
+        "node24",
+        "raw",
+        "browser"
+      ],
+      "environment": {},
+      "cli": "Explicit current software fixture inputs"
+    },
+    {
+      "path": "tools/test-vscreen-bundle.mjs",
+      "stage": "runtime",
+      "reason": "Current isolated software regression; no device actions",
+      "args": [],
+      "timeoutSeconds": 900,
+      "requires": [
+        "node24",
+        "python39",
+        "raw"
+      ],
+      "environment": {},
+      "cli": "Explicit current software fixture inputs"
+    },
+    {
+      "path": "tools/test-frontend-static-cache.mjs",
+      "stage": "runtime",
+      "reason": "Current isolated software regression; no device actions",
+      "args": [],
+      "timeoutSeconds": 900,
+      "requires": [
+        "node24",
+        "raw"
+      ],
+      "environment": {},
+      "cli": "Explicit current software fixture inputs"
+    },
+    {
+      "path": "tools/test-startup-boot-progress.mjs",
+      "stage": "fast",
+      "reason": "Current isolated software regression; no device actions",
+      "args": [],
+      "timeoutSeconds": 900,
+      "requires": [
+        "node24"
+      ],
+      "environment": {},
+      "cli": "Explicit current software fixture inputs"
+    },
+    {
+      "path": "tools/test-sidebar-layout-recovery.mjs",
+      "stage": "runtime",
+      "reason": "Current isolated software regression; no device actions",
+      "args": [],
+      "timeoutSeconds": 900,
+      "requires": [
+        "node24",
+        "raw",
+        "browser"
+      ],
+      "environment": {},
+      "cli": "Explicit current software fixture inputs"
+    },
+    {
+      "path": "tools/test-browser-origin-restore.mjs",
+      "stage": "runtime",
+      "reason": "Current isolated software regression; no device actions",
+      "args": [],
+      "timeoutSeconds": 900,
+      "requires": [
+        "node24",
+        "browser"
+      ],
+      "environment": {},
+      "cli": "Explicit current software fixture inputs"
+    },
+    {
+      "path": "tools/test-mobile-viewport-capsule.mjs",
+      "stage": "runtime",
+      "reason": "Current isolated software regression; no device actions",
+      "args": [],
+      "timeoutSeconds": 900,
+      "requires": [
+        "node24",
+        "raw",
+        "browser"
+      ],
+      "environment": {},
+      "cli": "Explicit current software fixture inputs"
+    },
+    {
+      "path": "tools/test-web-upload-framework.py",
+      "stage": "runtime",
+      "reason": "Java-only Robolectric real Android View/AFD fixture, explicit cache syscall model; no AGP, APK or device operations",
+      "args": [
+        "--jdk",
+        "{jdk}",
+        "--gradle-home",
+        "{gradleHome}"
+      ],
+      "timeoutSeconds": 600,
+      "requires": [
+        "python39",
+        "jdk17",
+        "toolchains"
+      ],
+      "environment": {},
+      "cli": "--jdk JDK17 --gradle-home Gradle dependency cache; pinned Gradle 9.3.1 wrapper distribution and JUnit jars required"
+    },
+    {
+      "path": "tools/test-builtin-internal-guard.py",
+      "stage": "fast",
+      "requires": [
+        "python39"
+      ],
+      "args": [],
+      "timeoutSeconds": 300,
+      "environment": {},
+      "cli": "no positional arguments; fixed npm seed fixtures use verified cache or HTTPS download",
+      "reason": "Current isolated guard/cache/client-seed regression; no device actions"
+    },
+    {
+      "path": "tools/test-destructive-guard.mjs",
+      "stage": "fast",
+      "requires": [
+        "node24"
+      ],
+      "args": [],
+      "timeoutSeconds": 300,
+      "environment": {},
+      "cli": "no positional arguments; fixed npm seed fixtures use verified cache or HTTPS download",
+      "reason": "Current isolated guard/cache/client-seed regression; no device actions"
+    },
+    {
+      "path": "tools/test-destructive-guard-pipeline.mjs",
+      "stage": "runtime",
+      "requires": [
+        "node24",
+        "raw"
+      ],
+      "args": [],
+      "timeoutSeconds": 900,
+      "environment": {},
+      "cli": "no positional arguments; fixed npm seed fixtures use verified cache or HTTPS download",
+      "reason": "Current isolated guard/cache/client-seed regression; no device actions"
+    },
+    {
+      "path": "tools/test-dsh-desktop-port.py",
+      "stage": "fast",
+      "requires": [
+        "python39",
+        "node24"
+      ],
+      "args": [],
+      "timeoutSeconds": 300,
+      "environment": {},
+      "cli": "no positional arguments; fixed npm seed fixtures use verified cache or HTTPS download",
+      "reason": "Current isolated guard/cache/client-seed regression; no device actions"
+    },
+    {
+      "path": "tools/test-plugin-client-seeds.py",
+      "stage": "runtime",
+      "requires": [
+        "python39",
+        "node24",
+        "raw"
+      ],
+      "args": [],
+      "timeoutSeconds": 900,
+      "environment": {},
+      "cli": "no positional arguments; fixed npm seed fixtures use verified cache or HTTPS download",
+      "reason": "Current isolated guard/cache/client-seed regression; no device actions"
+    },
+    {
+      "path": "tools/test-cache-contract.mjs",
+      "stage": "runtime",
+      "requires": [
+        "node24",
+        "raw"
+      ],
+      "args": [],
+      "timeoutSeconds": 900,
+      "environment": {},
+      "cli": "no positional arguments; fixed npm seed fixtures use verified cache or HTTPS download",
+      "reason": "Current isolated guard/cache/client-seed regression; no device actions"
+    },
+    {
+      "path": "tools/test-portable-migration.mjs",
+      "stage": "fast",
+      "reason": "Actual generated offline CLI, locked YAML, synthetic archive and transaction regression; no production data or devices",
+      "requires": [
+        "node24",
+        "python39"
+      ],
+      "args": [],
+      "timeoutSeconds": 180,
+      "environment": {},
+      "cli": "Generated portable CLI assets must already be prepared"
+    },
+    {
+      "path": "tools/test-portable-plan.py",
+      "stage": "fast",
+      "reason": "Read-only policy/source digest equality",
+      "requires": [
+        "python39"
+      ],
+      "args": [],
+      "timeoutSeconds": 60,
+      "environment": {},
+      "cli": "No arguments"
+    },
+    {
+      "path": "tools/test-browser-origin-server.py",
+      "stage": "runtime",
+      "reason": "Actual Java HTTP handler, real loopback sockets and JVM filesystem; excludes Android syscall/UI execution",
+      "requires": [
+        "python39",
+        "jdk17",
+        "toolchains"
+      ],
+      "args": [
+        "--jdk",
+        "{jdk}",
+        "--gradle-home",
+        "{gradleHome}"
+      ],
+      "timeoutSeconds": 300,
+      "environment": {},
+      "cli": "--jdk --gradle-home; pinned real framework JSON and current release classes"
     }
   ],
   "historicalExcluded": [

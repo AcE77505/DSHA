@@ -81,6 +81,9 @@ public class ConfigFragment extends Fragment {
             x -> startActivity(new Intent(requireContext(), ModelSetupActivity.class)));
     EditText apiKey = v.findViewById(R.id.config_api_key);
     EditText port = v.findViewById(R.id.config_port);
+    CompoundButton automaticPort = v.findViewById(R.id.config_port_auto);
+    v.findViewById(R.id.config_restore_port_drafts)
+        .setOnClickListener(x -> BrowserOriginRestore.show(requireContext()));
     CompoundButton checkUpdate = v.findViewById(R.id.config_check_update);
     CompoundButton desktop = v.findViewById(R.id.config_desktop_mode);
     pictureSettings = v.findViewById(R.id.config_picture_in_picture_settings);
@@ -196,6 +199,8 @@ public class ConfigFragment extends Fragment {
                     })
                 .show());
     port.setText(c.getPort());
+    automaticPort.setChecked("auto".equals(c.getWebPortMode()));
+    port.setEnabled(!automaticPort.isChecked());
     checkUpdate.setChecked(c.isCheckUpdate());
     desktop.setChecked(c.isDesktopMode());
     CompoundButton gecko = v.findViewById(R.id.config_gecko_core);
@@ -245,7 +250,8 @@ public class ConfigFragment extends Fragment {
     Runnable validateInputs =
         () -> {
           try {
-            com.deepseekharness.app.util.ConfigInput.port(port.getText().toString());
+            if (!automaticPort.isChecked())
+              com.deepseekharness.app.util.ConfigInput.port(port.getText().toString());
             save.setEnabled(apiKey.getText().length() <= 16384);
           } catch (IllegalArgumentException invalid) {
             save.setEnabled(false);
@@ -263,12 +269,21 @@ public class ConfigFragment extends Fragment {
         };
     port.addTextChangedListener(inputWatcher);
     apiKey.addTextChangedListener(inputWatcher);
+    automaticPort.setOnCheckedChangeListener(
+        (button, checked) -> {
+          port.setEnabled(!checked);
+          port.setError(null);
+          validateInputs.run();
+        });
     validateInputs.run();
     save.setOnClickListener(
         x -> {
           final int chosenPort;
           try {
-            chosenPort = com.deepseekharness.app.util.ConfigInput.port(port.getText().toString());
+            chosenPort =
+                automaticPort.isChecked()
+                    ? c.getPortInt()
+                    : com.deepseekharness.app.util.ConfigInput.port(port.getText().toString());
           } catch (IllegalArgumentException e) {
             advBody.setVisibility(View.VISIBLE);
             port.setError(e.getMessage());
@@ -311,7 +326,7 @@ public class ConfigFragment extends Fragment {
                   boolean keepUnreadable = keepKey && !credential.get().usable();
                   if (!keepKey) apiKey.setText("");
                   renderCredential.run();
-                  c.setPort(String.valueOf(chosenPort));
+                  c.setWebPort(automaticPort.isChecked() ? "auto" : "fixed", chosenPort);
                   c.setPermissionMode(permissionMode.get());
                   c.setCheckUpdate(checkUpdate.isChecked());
                   c.setDesktopMode(desktop.isChecked());

@@ -241,17 +241,51 @@ final class ColdToolsInstaller {
         coldRecord = isolated ? BoundedGuestSessions.begin(boot.ctx.getFilesDir()) : null;
         if (boot.coldCandidate != null)
           boot.coldCandidate.beforeLaunch(coldRecord == null ? null : coldRecord.id());
-        process =
-            boot.startRootfs(
-                command,
-                boot.launch(rt)
-                    .isolated(isolated)
-                    .record(coldRecord)
-                    .coldTrace(true)
-                    .coldMode(mode)
-                    .build());
-        return com.deepseekharness.app.util.BoundedProcessRunner.collect(
-            process, timeout, 256 * 1024, Compat::destroy);
+        var launch =
+            boot.launch(rt).isolated(isolated).record(coldRecord).coldTrace(true).coldMode(mode);
+        if ("proroot".equals(mode.runtime))
+          launch.environment(java.util.Map.of("PROROOT_VERBOSE", "1"));
+        process = boot.startRootfs(command, launch.build());
+        String diagnosticId = java.util.UUID.randomUUID().toString();
+        long began = android.os.SystemClock.elapsedRealtime();
+        var result =
+            com.deepseekharness.app.util.BoundedProcessRunner.collect(
+                process,
+                timeout,
+                256 * 1024,
+                Compat::destroy,
+                null,
+                current -> {
+                  var snapshot =
+                      current instanceof IsolatedInstallProcess owner
+                          ? owner.diagnosticSnapshot()
+                          : java.util.Map.<String, Object>of("identity", "UNSUPERVISED");
+                  saveDiagnostic(boot, diagnosticId, "timeout.json", snapshot);
+                });
+        saveDiagnostic(
+            boot,
+            diagnosticId,
+            "result.json",
+            java.util.Map.of(
+                "schema",
+                1L,
+                "mode",
+                mode.name(),
+                "elapsedMillis",
+                android.os.SystemClock.elapsedRealtime() - began,
+                "exit",
+                result.exitCode,
+                "timedOut",
+                result.timedOut,
+                "totalBytes",
+                result.totalBytes,
+                "head",
+                SensitiveData.redact(
+                    result.output.substring(0, Math.min(result.output.length(), 4000))),
+                "tail",
+                SensitiveData.redact(
+                    result.tail.substring(Math.max(0, result.tail.length() - 4000)))));
+        return result;
       } finally {
         if (process == null && coldRecord != null) coldRecord.uncertain();
         try {
@@ -263,6 +297,19 @@ final class ColdToolsInstaller {
           } else work.close();
         }
       }
+    }
+  }
+
+  private static void saveDiagnostic(
+      ProotBootstrap boot, String id, String name, java.util.Map<String, Object> values) {
+    try {
+      var fs = new com.deepseekharness.app.backup.AndroidBackupFileSystem();
+      File files = boot.ctx.getFilesDir().getCanonicalFile();
+      fs.parents(files, "cold-runtime-diagnostics/" + id + "/" + name);
+      File directory = fs.child(files, "cold-runtime-diagnostics/" + id);
+      fs.atomic(directory, name, com.deepseekharness.app.backup.BackupJson.write(values, 65536));
+    } catch (IOException | RuntimeException failure) {
+      boot.hostPorts().record("PROBE_DIAGNOSTIC_UNAVAILABLE", failure.getClass().getSimpleName());
     }
   }
 }

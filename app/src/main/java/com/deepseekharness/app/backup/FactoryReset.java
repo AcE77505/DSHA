@@ -258,6 +258,48 @@ public final class FactoryReset {
    */
   public static Result eraseApplicationData(Context context, BackupControl control)
       throws IOException {
+    try {
+      return eraseApplicationDataInternal(context, control);
+    } catch (OwnershipCheckFailure rejected) {
+      try {
+        var fs = new AndroidBackupFileSystem();
+        File retained = context.getNoBackupFilesDir().getCanonicalFile();
+        if (fs.stat(retained).type.equals("MISSING")) fs.directory(retained);
+        String id = java.util.UUID.randomUUID().toString();
+        fs.parents(retained, "factory-reset-diagnostics/" + id + ".json");
+        File directory = fs.child(retained, "factory-reset-diagnostics");
+        fs.atomic(
+            directory,
+            id + ".json",
+            BackupJson.write(
+                ownershipDiagnostic(
+                    new File(context.getApplicationInfo().dataDir).getCanonicalFile(), rejected),
+                8192));
+      } catch (IOException | RuntimeException unavailable) {
+        rejected.addSuppressed(new IOException("OWNERSHIP_DIAGNOSTIC_UNAVAILABLE", unavailable));
+      }
+      throw rejected;
+    }
+  }
+
+  static java.util.Map<String, Object> ownershipDiagnostic(
+      File privateRoot, OwnershipCheckFailure failure) {
+    var values = new java.util.LinkedHashMap<>(failure.diagnostic);
+    String raw = String.valueOf(values.get("path"));
+    String prefix = privateRoot.getAbsolutePath() + File.separator;
+    String relative =
+        raw.startsWith(prefix)
+            ? raw.substring(prefix.length())
+            : raw.equals(privateRoot.getAbsolutePath())
+                ? "PRIVATE_ROOT"
+                : "UNMAPPED_PRIVATE_TARGET";
+    values.put("path", com.deepseekharness.app.util.SensitiveData.redact(relative));
+    values.put("code", "RETIRED_DIRECTORY_NOT_OWNED");
+    return values;
+  }
+
+  private static Result eraseApplicationDataInternal(Context context, BackupControl control)
+      throws IOException {
     if (!com.deepseekharness.app.core.MaintenanceCoordinator.isOwner())
       throw new IOException("FORMAT_REQUIRES_MAINTENANCE");
     if (!AutomaticBackups.factoryResetSuspended())

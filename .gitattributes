@@ -34,3 +34,7 @@
 *.aidl text eol=lf
 # 退休原件必须覆盖后面的按扩展名规则，Git 不得改写原始换行字节。
 tools/history/** -text -eol
+
+# The configured Ubuntu proof and layout retain the exact signed build170 bytes.
+app/src/main/assets/ubuntu-tools.manifest.json -text -eol
+app/src/main/assets/ubuntu-tools.layout -text -eol

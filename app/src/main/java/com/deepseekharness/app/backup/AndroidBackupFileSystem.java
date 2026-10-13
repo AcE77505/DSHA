@@ -78,7 +78,8 @@ public class AndroidBackupFileSystem implements BackupFileSystem {
         stat.st_size,
         stat.st_mtime,
         stat.st_dev,
-        stat.st_mode & 0777);
+        stat.st_mode & 0777,
+        stat.st_ctime * 1_000_000_000L);
   }
 
   @Override
@@ -304,7 +305,13 @@ public class AndroidBackupFileSystem implements BackupFileSystem {
       try (ParcelFileDescriptor handle = ParcelFileDescriptor.dup(fd)) {
         StructStat node = Os.fstat(fd);
         if (!OsConstants.S_ISDIR(node.st_mode) || node.st_uid != android.os.Process.myUid())
-          throw new IOException("RETIRED_DIRECTORY_NOT_OWNED");
+          throw new OwnershipCheckFailure(
+              file.getAbsolutePath(),
+              android.os.Process.myUid(),
+              node.st_uid,
+              node.st_mode,
+              node.st_dev,
+              node.st_ino);
         if ((node.st_mode & 0700) != 0700)
           Os.chmod("/proc/self/fd/" + handle.getFd(), (node.st_mode & 0777) | 0700);
       } finally {

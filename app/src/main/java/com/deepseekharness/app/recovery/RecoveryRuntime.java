@@ -466,7 +466,7 @@ public final class RecoveryRuntime {
     for (String argument : argv) host.append(ShellQuote.arg(argument)).append(' ');
     ProcessBuilder builder =
         new ProcessBuilder("/system/bin/sh", "-c", host.toString()).redirectErrorStream(true);
-    Compat.redirectStdinDevNull(builder);
+    // native-session 在 guest 启动前通过独立 PIPE 消费 DSHA_START；不可先重定向 /dev/null。
     Map<String, String> env = builder.environment();
     env.clear();
     env.put("PATH", "/usr/local/bin:/usr/bin:/bin");
@@ -492,16 +492,38 @@ public final class RecoveryRuntime {
     writeAtomic(new File(files, "recovery-active"), instanceId.getBytes(StandardCharsets.US_ASCII));
     write(new File(session, "launched"), instanceId.getBytes(StandardCharsets.US_ASCII));
     try {
-      return builder.start();
+      var owned =
+          com.deepseekharness.app.runtime.OwnedRuntimeSession.start(
+              builder,
+              tmp,
+              context,
+              id ->
+                  write(
+                      new File(session, "native-session-id"),
+                      id.getBytes(StandardCharsets.US_ASCII)));
+      try {
+        owned.getOutputStream().close(); // 已完成出生握手；应急 Web 不接受交互 stdin。
+        return owned;
+      } catch (IOException failure) {
+        try {
+          owned.close();
+        } catch (RuntimeException unknown) {
+          failure.addSuppressed(unknown);
+        }
+        throw failure;
+      }
     } catch (IOException failure) {
-      // start 未返回 Process 时 Java 未创建可运行的目标；本地记录不能把它误当活进程。
-      markClosed(session, instanceId);
+      // native-session 可能已存在但握手/回收证据不可读。保留启动记录；不能猜测没有 guest。
       throw failure;
     }
   }
 
   /** 主线程进程句柄已经交给控制器后登记，失败仍由控制器保留句柄并停止。 */
   public void recordLauncher(Process process) throws IOException {
+    if (process instanceof com.deepseekharness.app.runtime.OwnedRuntimeSession owned) {
+      owned.requireCurrentBirth();
+      return;
+    }
     File record = new File(session, "launcher.identity");
     rejectLink(record);
     long deadline = android.os.SystemClock.elapsedRealtime() + 2500;
@@ -626,6 +648,31 @@ public final class RecoveryRuntime {
   private static boolean stopRecorded(File session, File home, String instanceId, Process process)
       throws IOException {
     write(new File(home, ".recovery-stop"), instanceId.getBytes(StandardCharsets.US_ASCII));
+    if (process instanceof com.deepseekharness.app.runtime.OwnedRuntimeSession owned) {
+      try {
+        if (!owned.closeConfirmed()) return false;
+      } catch (RuntimeException unknown) {
+        try {
+          writeAtomic(
+              new File(session, "stop-diagnostic.json"),
+              com.deepseekharness.app.backup.BackupJson.write(owned.diagnosticSnapshot(), 65536));
+        } catch (IOException unavailable) {
+          unknown.addSuppressed(unavailable);
+        }
+        throw new IOException("RECOVERY_STOP_UNCONFIRMED", unknown);
+      }
+      markClosed(session, instanceId);
+      return true;
+    }
+    File nativeRecord = new File(session, "native-session-id");
+    rejectLink(nativeRecord);
+    if (process == null && exists(nativeRecord)) {
+      String id = new String(read(nativeRecord, 100), StandardCharsets.US_ASCII).trim();
+      if (!com.deepseekharness.app.runtime.OwnedRuntimeSession.recordedExit(
+          session.getParentFile().getParentFile(), id)) return false;
+      markClosed(session, instanceId);
+      return true;
+    }
     String profile = "dsha-emergency-" + instanceId;
     File identity = new File(home, ".recovery-identity");
     rejectLink(identity);

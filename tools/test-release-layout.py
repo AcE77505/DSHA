@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from release_layout import digest
+from release_names import apk_filename, apk_name_version
 
 
 def load(name, filename):
@@ -124,6 +125,7 @@ class ReleaseLayoutTest(unittest.TestCase):
         self.assertEqual(list((self.root/'artifacts/release-staging').iterdir()),[])
 
     def test_manifest_downloads_follow_download_version_group(self):
+        self.write('app/build.gradle', b"ext.dshaApkNameVersion = '0.2.0-rc2'\n")
         notes = self.write('notes.txt', b'limited checked scope')
         output = self.root / 'artifacts/manifests/release-manifest.json'
         version = '0.2.9-20261004.2100-dsh0.2.0-rc.2'
@@ -134,7 +136,9 @@ class ReleaseLayoutTest(unittest.TestCase):
                         bytes=apk.stat().st_size, sha256=digest(apk))
         argv = ['manifest', '--standard', str(apks[0]), '--low', str(apks[1]), '--build-tools', str(self.root),
                 '--notes', str(notes), '--output', str(output)]
-        with patch('sys.argv', argv), patch.object(manifest, 'inspect', inspect):
+        with patch('sys.argv', argv), patch.object(manifest, 'inspect', inspect), \
+                patch.object(manifest, 'apk_name_version', lambda: apk_name_version(self.root)), \
+                patch.object(manifest, 'apk_filename', lambda flavor: apk_filename(flavor, self.root)):
             manifest.main()
         release = json.loads(output.read_text(encoding='utf8'))['releases'][0]
         self.assertEqual(release['version'], version)

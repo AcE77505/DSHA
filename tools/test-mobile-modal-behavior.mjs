@@ -94,10 +94,13 @@ try {
   await page.setViewportSize({width:360,height:800});
   await page.waitForFunction(() => document.documentElement.style.getPropertyValue('--dsha-mobile-visible-vh') === '800px');
   // 模拟 overlay 键盘：只有 visualViewport 变高/偏移，layout viewport 不改变。
-  const visual = await page.evaluate(() => {
+  await page.evaluate(() => {
     Object.defineProperty(visualViewport, 'height', {configurable:true, value:290});
     Object.defineProperty(visualViewport, 'offsetTop', {configurable:true, value:16});
     visualViewport.dispatchEvent(new Event('resize'));
+  });
+  await page.waitForFunction(() => document.documentElement.style.getPropertyValue('--dsha-mobile-visible-vh') === '290px');
+  const visual = await page.evaluate(() => {
     const el = document.querySelector('[data-shortcut-modal="shortcuts"]');
     el.querySelector('footer').scrollIntoView({block:'end'});
     const box = el.getBoundingClientRect();

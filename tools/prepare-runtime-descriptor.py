@@ -5,7 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-from runtime_input_contract import load, asset_paths, launcher_paths
+from runtime_input_contract import load, asset_paths, launcher_paths, bridge_protocol
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,7 +36,7 @@ def build_descriptor(root):
     previous = READ_COMPATIBILITY.get(version, [])
     contract = {'baseVersion': (assets / 'offline-rootfs.version').read_text().strip(),
                 'dshVersion': version, 'launcherContract': 'DSHA_ARM64_V2',
-                'launcherInputs': launchers, 'bridgeProtocol': 3,
+                'launcherInputs': launchers, 'bridgeProtocol': bridge_protocol(root),
                 'dataRead': previous + ['dsh-' + version], 'dataWrite': 'dsh-' + version,
                 'inputs': inputs}
     identity = hashlib.sha256(json.dumps(contract, sort_keys=True, separators=(',', ':')).encode()).hexdigest()

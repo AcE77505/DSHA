@@ -1,4 +1,5 @@
 """检查源码行尾、显式依赖身份与工作流钉住；不扫私有数据或历史日志。"""
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -7,10 +8,19 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 names = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode("utf-8").split("\0")
 errors = []
+# These two inherited signed proof files must retain their original bytes.
+# Check the signed descriptor fingerprint instead of normalizing their line endings.
+pinned_assets = ('ubuntu-tools.manifest.json', 'ubuntu-tools.layout')
+descriptor = json.loads((ROOT / 'app/src/main/assets/runtime-descriptor.json').read_text(encoding='utf-8'))
+for name in pinned_assets:
+    file = ROOT / 'app/src/main/assets' / name
+    if hashlib.sha256(file.read_bytes()).hexdigest() != descriptor['inputs'].get(name):
+        errors.append('SIGNED_ASSET_PROOF_BYTES: ' + name)
+
 binary = {".so", ".bin", ".jar", ".aar", ".gz", ".tgz", ".zip", ".png", ".jpg", ".webp", ".pdf", ".keystore"}
 for name in names:
     path = ROOT / name
-    if not path.is_file() or path.suffix in binary or name.startswith('tools/history/'):
+    if not path.is_file() or path.suffix in binary or name.startswith('tools/history/') or name in {'app/src/main/assets/' + n for n in pinned_assets}:
         continue
     value = path.read_bytes()
     if b"\0" not in value and b"\r\n" in value:

@@ -200,6 +200,19 @@ public final class DocumentStreams {
   public static Cursor query(
       ContentResolver resolver, Uri uri, String[] columns, BackupControl control)
       throws IOException {
+    return query(resolver, uri, columns, control, false);
+  }
+
+  /** 上传显示名是可选元数据；null 游标不改变备份查询必须可读的既有语义。 */
+  public static Cursor optionalQuery(
+      ContentResolver resolver, Uri uri, String[] columns, BackupControl control)
+      throws IOException {
+    return query(resolver, uri, columns, control, true);
+  }
+
+  private static Cursor query(
+      ContentResolver resolver, Uri uri, String[] columns, BackupControl control, boolean optional)
+      throws IOException {
     CancellationSignal signal = new CancellationSignal();
     AutoCloseable querying = onCancel(control, signal::cancel);
     Cursor cursor = null;
@@ -207,7 +220,12 @@ public final class DocumentStreams {
     try {
       control.check();
       cursor = resolver.query(uri, columns, null, null, null, signal);
-      if (cursor == null) throw new IOException("SAF_UNREADABLE");
+      if (cursor == null) {
+        control.check();
+        if (!optional) throw new IOException("SAF_UNREADABLE");
+        closeQuietly(querying);
+        return null;
+      }
       Cursor owned = cursor;
       reading = onCancel(control, () -> closeQuietly(owned));
       AutoCloseable registered = reading;

@@ -60,7 +60,7 @@ Windows 使用 `gradlew.bat`，并以真实 Python 可执行文件代替不可�
 
 软件交付需两版完整单测、Release Lint、实际 APK/资产/ELF、签名、插件/应急门禁和精确摘要回执。JNI 静态审计使用对应 release APK，不推荐旧 debug 产物。Low 必须保留 v1；用 `apksigner verify --min-sdk-version 23` 明确核对 v1/v2/v3。
 
-产物固定放 `release/dsha-0.2.0-rc2.apk`、`release/dsha-0.2.0-rc2low.apk` 及 `.apk.sha256`。同版本同 flavor 按当前授权替换，其他历史版本保留；`app/build` 中间包不冒充交付。源码快照、台账和报告绑定最终字节。
+产物固定放 `release/0.2.0-rc2.1/dsha-0.2.0-rc2.1.apk`、`release/0.2.0-rc2.1/dsha-0.2.0-rc2.1low.apk` 及 `.apk.sha256`。同版本同 flavor 按当前授权替换，其他历史版本保留；`app/build` 中间包不冒充交付。源码快照、台账和报告绑定最终字节。
 
 `ci-package` 的未签名完整包只用于软件验证，不用于手机安装或 release。配置文件不能证明受保护环境、签名线上运行和仓库保护已配置；实际部署与发布需要相应证据。
 

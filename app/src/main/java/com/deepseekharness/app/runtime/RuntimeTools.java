@@ -43,6 +43,12 @@ final class RuntimeTools {
         RuntimeTemporaryDirectories.prepare(
             new com.deepseekharness.app.backup.AndroidBackupFileSystem(), rootfs);
         try {
+          com.deepseekharness.app.backup.ScratchCleanup.prepare(
+              new com.deepseekharness.app.backup.AndroidBackupFileSystem(), rootfs);
+        } catch (IOException unavailable) {
+          android.util.Log.w("DSHA", "DSHA scratch directory unavailable", unavailable);
+        }
+        try {
           prepareResolver(context, rootfs, settings, deviceDns);
         } catch (IOException error) {
           android.util.Log.w("DSHA", "DNS configuration unchanged", error);
@@ -523,6 +529,7 @@ final class RuntimeTools {
     // silently add confirmation, frozen-lockfile, or lifecycle blocking.
     environment.put("DSHA_PLUGIN_UNLOCKED", "1");
     environment.put("DSHA_ANDROID_RUNTIME", "1");
+    environment.put("DSHA_CACHE_DIR", com.deepseekharness.app.util.ScratchPaths.GUEST_DIRECTORY);
     environment.put("DSHA_DNS_MODE", settings.dnsMode);
     String preload = "--require=/usr/local/share/dsha/dns-compat.cjs";
     if (new File(rootfs, "usr/local/share/dsha/dns-compat.cjs").isFile()) {

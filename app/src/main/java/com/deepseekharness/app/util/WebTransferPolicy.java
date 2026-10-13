@@ -3,7 +3,13 @@ package com.deepseekharness.app.util;
 /** 网页文件边界；文件名不能变成路径，长度声明不能越过本地容量限制。 */
 public final class WebTransferPolicy {
   public static final long DOWNLOAD_LIMIT = 2L * 1024 * 1024 * 1024;
-  public static final long UPLOAD_LIMIT = 256L * 1024 * 1024;
+
+  /** 一次系统选择的总字节上限，允许单个 5,000,000,000 字节文件。 */
+  public static final long UPLOAD_LIMIT = 5L * 1024 * 1024 * 1024;
+
+  /** 暂存缓存所在卷须留下的余量；不代表后端附件发布的全部空间需求。 */
+  public static final long UPLOAD_RESERVE = 1024L * 1024 * 1024;
+
   public static final int UPLOAD_COUNT = WebUploadSessionBudget.MAX_BATCH_FILES;
 
   private WebTransferPolicy() {}
@@ -34,5 +40,13 @@ public final class WebTransferPolicy {
       throw new IllegalArgumentException(com.deepseekharness.app.util.UiText.text("文件超过允许大小"));
     if (complete && expected >= 0 && actual != expected)
       throw new IllegalArgumentException(com.deepseekharness.app.util.UiText.text("文件未下载完整，请重试"));
+  }
+
+  /** 写下一块之前检查当前可用空间；不重复扣除已经反映在可用量中的缓存。 */
+  public static void checkUploadSpace(long nextWriteBytes, long currentUsableBytes) {
+    if (nextWriteBytes < 0
+        || currentUsableBytes < UPLOAD_RESERVE
+        || nextWriteBytes > currentUsableBytes - UPLOAD_RESERVE)
+      throw new IllegalArgumentException("UPLOAD_SPACE_INSUFFICIENT");
   }
 }

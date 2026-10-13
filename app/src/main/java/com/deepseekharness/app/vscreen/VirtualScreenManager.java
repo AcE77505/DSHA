@@ -7,6 +7,8 @@ import com.deepseekharness.app.BuildConfig;
 import com.deepseekharness.app.DshaApp;
 import com.deepseekharness.app.util.OneShotLaunchAuthority;
 import com.deepseekharness.app.util.ShellQuote;
+import com.deepseekharness.app.util.ScreenActionResult;
+import com.deepseekharness.app.util.VirtualScreenRoutes;
 import com.deepseekharness.app.util.VirtualScreenRequestFence;
 import java.net.HttpURLConnection;
 import java.net.URLEncoder;
@@ -36,6 +38,10 @@ public final class VirtualScreenManager {
           });
   private final Context context;
   private volatile String token = "", channel = "", generation = "", lastError = "";
+
+  /** 最近一次创建失败摘要：连续重试同样的失败不再重复写诊断（写放大）。 */
+  private volatile String lastCreateFailure = "";
+
   private volatile int port;
   private final AtomicLong LIFECYCLE_EPOCH = new AtomicLong();
   private volatile long activeEpoch = -1;
@@ -199,6 +205,11 @@ public final class VirtualScreenManager {
 
   private JSONObject perform(
       Snapshot snapshot, String route, String query, boolean changeGeneration) {
+    return perform(snapshot, route, query, changeGeneration, true);
+  }
+
+  private JSONObject perform(
+      Snapshot snapshot, String route, String query, boolean changeGeneration, boolean freshFrame) {
     if (snapshot == null) return missingSnapshot(null);
     if (!current(snapshot)) return failure("VSCREEN_REVOKED");
     if (snapshot.target != null
@@ -209,30 +220,103 @@ public final class VirtualScreenManager {
       query += (query.isEmpty() ? "" : "&") + "expectedPackage=" + encode(snapshot.target);
     JSONObject value = requestAt(snapshot.identity.port, snapshot.identity.token, route, query);
     // Grant revision and target checks may use platform calls; keep them outside LOCK too.
-    if (!authorized(snapshot.authority)) return failure("SCREEN_TARGET_CHANGED");
+    if (!authorized(snapshot.authority))
+      return afterExecutionOrNotExecuted(
+          value,
+          VirtualScreenRoutes.mutatesCore(route),
+          ScreenActionResult.TARGET_CHANGED_AFTER_EXECUTION,
+          "SCREEN_TARGET_CHANGED");
+    String rejection = null;
     synchronized (LOCK) {
-      if (!currentLocked(snapshot)) return failure("VSCREEN_REVOKED");
+      if (!currentLocked(snapshot))
+        return afterExecutionOrNotExecuted(
+            value,
+            VirtualScreenRoutes.mutatesCore(route),
+            ScreenActionResult.RUN_CHANGED_AFTER_EXECUTION,
+            "VSCREEN_REVOKED");
       if (!value.optBoolean("ok")) {
         lastError = value.optString("error");
-        return value;
+        // 只在这里算出要记的摘要，落盘必须放到锁外（记录会写文件）。
+        rejection = frameRejectionDetail(route, value);
+      } else {
+        String returned = value.optString("generation", generation);
+        if (!generation.equals(returned)) {
+          if (!changeGeneration)
+            return afterExecutionOrNotExecuted(
+                value,
+                VirtualScreenRoutes.mutatesCore(route),
+                ScreenActionResult.RUN_CHANGED_AFTER_EXECUTION,
+                "STALE_GENERATION");
+          generation = returned;
+          stateRevision++;
+          frameSequence = -1;
+        }
+        long sequence = value.optLong("frameSeq", -1);
+        if (freshFrame
+            && com.deepseekharness.app.util.VirtualScreenPolicy.frameRegressed(
+                frameSequence,
+                sequence,
+                route.equals("/vscreen/status") || route.equals("/vscreen/preview")))
+          return failure("STALE_FRAME");
+        // 输入可能已经真的执行过：保留它的结果，但观察元数据只前进、绝不倒退。
+        frameSequence =
+            com.deepseekharness.app.util.VirtualScreenPolicy.advanceFrameSequence(
+                frameSequence, sequence);
+        tagLocked(value);
       }
-      String returned = value.optString("generation", generation);
-      if (!generation.equals(returned)) {
-        if (!changeGeneration) return failure("STALE_GENERATION");
-        generation = returned;
-        stateRevision++;
-        frameSequence = -1;
-      }
-      long sequence = value.optLong("frameSeq", -1);
-      if (sequence >= 0
-          && sequence < frameSequence
-          && (route.equals("/vscreen/status") || route.equals("/vscreen/preview")))
-        return failure("STALE_FRAME");
-      // A real input may already have executed before a newer preview arrives. Keep its
-      // result, but never regress observation metadata or offer it as a current frame.
-      if (sequence >= 0) frameSequence = Math.max(frameSequence, sequence);
-      tagLocked(value);
-      return value;
+    }
+    if (rejection != null) recordFrameRejection(rejection);
+    return value;
+  }
+
+  /** 帧门拒绝的可诊断摘要：稳定原因码 + 实际值/期望值；不含画面、坐标或用户内容。 */
+  private static String frameRejectionDetail(String route, JSONObject value) {
+    if (!"STALE_FRAME".equals(value.optString("error"))) return null;
+    return route
+        + " reason="
+        + value.optString("reason", "UNKNOWN")
+        + " requested="
+        + value.optLong("requestedFrameSeq", -1)
+        + " current="
+        + value.optLong("currentFrameSeq", -1)
+        + " observed="
+        + value.optLong("observedFrameSeq", -1);
+  }
+
+  /** 同一 (route, reason) 的连续拒绝只记一条，且至少间隔 10 秒 —— 有界日志不能被常态拒绝刷掉。 */
+  private static final long FRAME_REJECTION_INTERVAL_MS = 10_000;
+
+  private final Object REJECTION_LOG = new Object();
+  private String lastFrameRejection = "";
+  private long lastFrameRejectionAt;
+
+  /**
+   * 帧门拒绝必须可诊断（issue #117）：写进有界事件记录，用户导出「自检与诊断」时能看到
+   * 实际值/期望值，而不是只有一个 STALE_FRAME。
+   */
+  private void recordFrameRejection(String detail) {
+    long now = clock.getAsLong();
+    synchronized (REJECTION_LOG) {
+      String key = detail.split(" requested=", 2)[0];
+      if (key.equals(lastFrameRejection)
+          && now - lastFrameRejectionAt < FRAME_REJECTION_INTERVAL_MS) return;
+      lastFrameRejection = key;
+      lastFrameRejectionAt = now;
+    }
+    recordDiagnostic("VSCREEN_INPUT_REJECTED", detail);
+  }
+
+  /** 诊断记录会写文件，一律交给 WORKER：绝不占住 ACTIONS 串行通道，也不在 LOCK 里落盘。 */
+  private void recordDiagnostic(String stage, String detail) {
+    try {
+      WORKER.execute(
+          () -> {
+            try {
+              com.deepseekharness.app.core.DiagnosticLog.record(context, stage, detail);
+            } catch (Throwable ignored) {
+            }
+          });
+    } catch (Throwable ignored) {
     }
   }
 
@@ -251,6 +335,21 @@ public final class VirtualScreenManager {
   private JSONObject performRequired(String gen, String route, String query) {
     Snapshot session = snapshot(gen);
     return session == null ? missingSnapshot(gen) : perform(session, route, query, false);
+  }
+
+  private static JSONObject afterExecutionOrNotExecuted(
+      JSONObject value, boolean mutating, String marker, String notExecutedError) {
+    if (mutating && value.optBoolean("executionUnknown")) return value;
+    if (mutating && value.optBoolean("ok")) return markedAfterExecution(value, marker);
+    return value.optBoolean("ok") ? failure(notExecutedError) : value;
+  }
+
+  private static JSONObject markedAfterExecution(JSONObject value, String marker) {
+    try {
+      value.put(marker, true);
+    } catch (Exception ignored) {
+    }
+    return value;
   }
 
   private void tagLocked(JSONObject value) {
@@ -388,6 +487,7 @@ public final class VirtualScreenManager {
       }
       JSONObject created =
           requestAt(selectedPort, coreToken, "/vscreen/create", "width=" + w + "&height=" + h);
+      recordCreateOutcome(created);
       boolean live = authorized(authority), committed = false;
       synchronized (LOCK) {
         if (live
@@ -405,6 +505,8 @@ public final class VirtualScreenManager {
       if (!committed) {
         requestAt(selectedPort, coreToken, "/vscreen/close", "");
         failStart(launchEpoch);
+        if (!created.optBoolean("ok"))
+          recordDiagnostic("VSCREEN_CREATE_REJECTED", created.optString("error", "UNKNOWN"));
         return created.optBoolean("ok") ? failure("VSCREEN_START_CANCELLED") : created;
       }
       ScheduledFuture<?> scheduled =
@@ -419,7 +521,7 @@ public final class VirtualScreenManager {
     } catch (Throwable error) {
       if (!coreToken.isEmpty()) requestAt(selectedPort, coreToken, "/vscreen/close", "");
       failStart(launchEpoch);
-      return failure("VSCREEN_START_" + error.getClass().getSimpleName());
+      return failure(com.deepseekharness.app.util.VirtualScreenFailures.startFailure(error), error);
     } finally {
       cancelAdbLaunch(launchEpoch);
     }
@@ -443,6 +545,11 @@ public final class VirtualScreenManager {
 
   public JSONObject preview() {
     return request("/vscreen/preview", "");
+  }
+
+  /** 授权与语义操作只需要本次显示身份；旧像素元数据不能阻断它们。 */
+  public JSONObject targetStatus() {
+    return perform(snapshot(null), "/vscreen/status", "", false, false);
   }
 
   public JSONObject previewSince(String gen, long seq) {
@@ -474,13 +581,19 @@ public final class VirtualScreenManager {
         () -> {
           Snapshot session = snapshot(gen);
           if (session == null) return missingSnapshot(gen);
-          JSONObject info = perform(session, "/vscreen/status", "", false);
+          JSONObject info = perform(session, "/vscreen/status", "", false, false);
           if (!info.optBoolean("ok")) return info;
           if (!current(session)) return failure("VSCREEN_REVOKED");
           JSONObject result =
               com.deepseekharness.app.DshaAccessibilityService.virtualControl(
                   accessibility, info.optInt("displayId", -1), operation, args);
-          return current(session) ? result : failure("SCREEN_TARGET_CHANGED");
+          if (current(session)) return result;
+          // edit/submit 可能已经写进去了：保留真实结果并标记，只有只读的 editor 仍报「未执行」（#140）。
+          return afterExecutionOrNotExecuted(
+              result,
+              VirtualScreenRoutes.mutates(operation),
+              ScreenActionResult.TARGET_CHANGED_AFTER_EXECUTION,
+              "SCREEN_TARGET_CHANGED");
         });
   }
 
@@ -488,7 +601,7 @@ public final class VirtualScreenManager {
     return ordered(
         () -> {
           Snapshot session = snapshot(null);
-          JSONObject frame = perform(session, "/vscreen/preview", "", false);
+          JSONObject frame = perform(session, "/vscreen/status", "", false, false);
           if (!frame.optBoolean("ok")) return frame;
           if (!current(session)) return failure("VSCREEN_REVOKED");
           JSONObject result =
@@ -511,22 +624,26 @@ public final class VirtualScreenManager {
         () -> {
           Snapshot session = snapshot(gen);
           if (session == null) return missingSnapshot(gen);
-          JSONObject check =
-              perform(
-                  session,
-                  "/vscreen/check",
-                  "generation=" + encode(gen) + "&frameSeq=" + seq,
-                  false);
-          if (!check.optBoolean("ok")) return check;
+          // node 按 nodeId 走无障碍 performAction：目标是否还在、是否还在同一窗口，由无障碍层的
+          // STALE_TREE（树 ≤30 秒）+ refresh() + windowId 判定。核心的像素帧门只对坐标注入有意义，
+          // 前置它只会让 tree → node 这条零截图链路在动态界面下必然断掉（issue #117）。
+          JSONObject info = perform(session, "/vscreen/status", "", false, false);
+          if (!info.optBoolean("ok")) return info;
           if (!current(session)) return failure("VSCREEN_REVOKED");
           try {
             JSONObject result =
                 com.deepseekharness.app.DshaAccessibilityService.virtualControl(
                     accessibility,
-                    check.optInt("displayId", -1),
+                    info.optInt("displayId", -1),
                     "node",
                     new JSONObject().put("nodeId", node).put("action", action).put("text", text));
-            return current(session) ? result : failure("SCREEN_TARGET_CHANGED");
+            return current(session)
+                ? result
+                : afterExecutionOrNotExecuted(
+                    result,
+                    true,
+                    ScreenActionResult.TARGET_CHANGED_AFTER_EXECUTION,
+                    "SCREEN_TARGET_CHANGED");
           } catch (Exception invalid) {
             return failure("INVALID_NODE_ACTION");
           }
@@ -569,9 +686,11 @@ public final class VirtualScreenManager {
           String result =
               com.deepseekharness.app.DshaAccessibilityService.virtualInput(
                   check.optInt("displayId", -1), text);
-          return current(session)
-              ? result.equals("OK") ? check : failure(result)
-              : failure("SCREEN_TARGET_CHANGED");
+          if (current(session)) return result.equals("OK") ? check : failure(result);
+          // 输入可能已经写进目标应用：保留真实结果并标记，只有输入本身失败时才按「未执行」返回（#140）。
+          if (result.equals("OK"))
+            return markedAfterExecution(check, ScreenActionResult.TARGET_CHANGED_AFTER_EXECUTION);
+          return failure(result);
         });
   }
 
@@ -782,6 +901,26 @@ public final class VirtualScreenManager {
         .toString();
   }
 
+  /**
+   * 创建结果留痕：失败写 core 的稳定码 + 根因摘要——这是唯一能定位隐藏 API 缺口的线索
+   * （issue #113），否则用户只拿到一个异常类名、诊断页里什么都没有；同样的失败只写一次，
+   * 连续重试不再放大诊断。成功则清掉去重键，让下一次复发还能记上。
+   */
+  private void recordCreateOutcome(JSONObject value) {
+    if (value == null) return;
+    if (value.optBoolean("ok")) {
+      lastCreateFailure = "";
+      return;
+    }
+    Context app = context;
+    String code = value.optString("error");
+    String cause = value.optString("cause");
+    String summary = cause.isEmpty() ? code : code + " " + cause;
+    if (app == null || summary.isEmpty() || summary.equals(lastCreateFailure)) return;
+    lastCreateFailure = summary;
+    com.deepseekharness.app.core.DiagnosticLog.record(app, "VSCREEN_CREATE", summary);
+  }
+
   private static JSONObject requestAt(
       int requestPort, String requestToken, String route, String query) {
     if (requestToken == null || requestToken.isEmpty() || requestPort < 1)
@@ -801,20 +940,23 @@ public final class VirtualScreenManager {
       c.setReadTimeout(12000);
       int code = c.getResponseCode();
       java.io.InputStream stream = code >= 400 ? c.getErrorStream() : c.getInputStream();
-      if (stream == null) return failure("VSCREEN_HTTP_" + code);
+      if (stream == null) return responseFailure(route, "VSCREEN_HTTP_" + code);
       java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
       try (java.io.InputStream in = stream) {
         byte[] b = new byte[8192];
         int n;
         while ((n = in.read(b)) >= 0) {
-          if (out.size() + n > 4 * 1024 * 1024) return failure("VSCREEN_RESPONSE_LIMIT");
+          if (out.size() + n > 4 * 1024 * 1024)
+            return responseFailure(route, "VSCREEN_RESPONSE_LIMIT");
           out.write(b, 0, n);
         }
       }
       JSONObject result = new JSONObject(out.toString("UTF-8"));
       return result;
     } catch (Exception e) {
-      return failure("VSCREEN_CONNECTION_" + e.getClass().getSimpleName());
+      return VirtualScreenRoutes.mutatesCore(route)
+          ? responseFailure(route, "INPUT_RESULT_UNKNOWN")
+          : failure(e);
     } finally {
       if (c != null) c.disconnect();
     }
@@ -828,6 +970,16 @@ public final class VirtualScreenManager {
     } catch (Exception e) {
       return null;
     }
+  }
+
+  private static JSONObject responseFailure(String route, String code) {
+    JSONObject value =
+        failure(VirtualScreenRoutes.mutatesCore(route) ? "INPUT_RESULT_UNKNOWN" : code);
+    try {
+      if (VirtualScreenRoutes.mutatesCore(route)) value.put("executionUnknown", true);
+    } catch (Exception ignored) {
+    }
+    return value;
   }
 
   public static String encode(String v) {
@@ -875,10 +1027,36 @@ public final class VirtualScreenManager {
     return j;
   }
 
+  /** 失败一律给稳定码 + 根因摘要，别把异常类名当错误码外泄（issue #113）。 */
+  private static JSONObject failure(Throwable error) {
+    return failure(com.deepseekharness.app.util.VirtualScreenFailures.code(error), error);
+  }
+
+  private static JSONObject failure(String code, Throwable error) {
+    JSONObject value = failure(code);
+    try {
+      String cause = com.deepseekharness.app.util.VirtualScreenFailures.cause(error);
+      if (!cause.isEmpty()) value.put("cause", cause);
+    } catch (Exception ignored) {
+    }
+    return value;
+  }
+
   private static JSONObject failure(String code) {
+    if (!"VSCREEN_NOT_RUNNING".equals(code)) {
+      try {
+        android.util.Log.w(
+            "DSHA-VSCREEN",
+            com.deepseekharness.app.util.VirtualScreenBootstrap.diagnosticCode(code));
+      } catch (Throwable unavailableLog) {
+        /* 宿主框架桩不能写 Android 日志。 */
+      }
+    }
     JSONObject j = new JSONObject();
     try {
       j.put("ok", false).put("error", code);
+      if (code.equals("INPUT_RESULT_UNKNOWN") || code.equals("VIRTUAL_INPUT_RESULT_UNKNOWN"))
+        j.put("executionUnknown", true);
     } catch (Exception ignored) {
     }
     return j;

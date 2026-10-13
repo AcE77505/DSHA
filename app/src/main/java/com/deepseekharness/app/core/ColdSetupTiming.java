@@ -1,12 +1,12 @@
-package com.deepseekharness.app.runtime;
+package com.deepseekharness.app.core;
 
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import com.deepseekharness.app.backup.*;
-import com.deepseekharness.app.core.HarnessController;
-import com.deepseekharness.app.core.MaintenanceCoordinator;
+import com.deepseekharness.app.runtime.*;
+
 import java.io.File;
 import java.io.IOException;
 import java.util.*;

@@ -28,6 +28,7 @@ jobs:
           node-version: ${{ steps.toolchain.outputs.node }}
       - name: Verify checked-in contracts
         run: |
+          python3 tools/pc-migration/prepare-assets.py --output app/src/main/assets
           python3 tools/prepare-runtime-tools.py --check
           python3 tools/verify-runtime-descriptor-source.py
           python3 tools/generate-third-party-notices.py --check

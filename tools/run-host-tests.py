@@ -306,7 +306,7 @@ def main():
     parser.add_argument("--check-manifest",action="store_true");parser.add_argument("--list",action="store_true");parser.add_argument("--only",action="append",default=[])
     parser.add_argument("--node",default=shutil.which("node") or "node");parser.add_argument("--powershell",default=shutil.which("pwsh") or "pwsh")
     parser.add_argument("--raw");parser.add_argument("--managed");parser.add_argument("--pnpm-cli");parser.add_argument("--toolchain-root",default=os.environ.get("DSHA_TOOLCHAINS"));parser.add_argument("--jdk")
-    parser.add_argument("--playwright");parser.add_argument("--browsers-path");parser.add_argument("--browser");parser.add_argument("--mobile-upstream",default=str(ROOT/"app/build/mobile-upstream-a094/lib"))
+    parser.add_argument("--playwright");parser.add_argument("--browsers-path");parser.add_argument("--browser");parser.add_argument("--mobile-upstream",default=str(ROOT/"app/build/build166/upstream/dsh-web-mobile-9b16223e6c5ee8209c25034b24fb790990967b3f/lib"))
     parser.add_argument("--linux-host");parser.add_argument("--wsl-distro",default="docker-desktop");parser.add_argument("--linux-tempdir",help="Explicit writable Linux fixture directory; no WSL repair or remount");parser.add_argument("--flavor",choices=("standard","low"),default="standard")
     parser.add_argument("--linux-native-inputs",default=str(ROOT/"app/build/audit-build156/linux-native"),help="Prepared NDK/Ubuntu sysroot receipt for the explicit WSL native handshake fixture")
     parser.add_argument("--apks",nargs=2);parser.add_argument("--output",type=Path,default=ROOT/"app/build/host-tests")

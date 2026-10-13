@@ -164,6 +164,27 @@ public class ConfigStore {
     return String.valueOf(getPortInt());
   }
 
+  public String getWebPortMode() {
+    return com.deepseekharness.app.util.WebPortSettings.mode(
+        prefs.contains(Constants.KEY_WEB_PORT_MODE)
+            ? text(Constants.KEY_WEB_PORT_MODE, "auto")
+            : null,
+        prefs.contains(Constants.KEY_PORT) ? text(Constants.KEY_PORT, "") : null);
+  }
+
+  public int getRequestedWebPort() {
+    return com.deepseekharness.app.util.WebPortSettings.requested(getWebPortMode(), getPortInt());
+  }
+
+  public void setWebPort(String mode, int fixedPort) {
+    com.deepseekharness.app.util.WebPortSettings.requested(mode, fixedPort);
+    prefs
+        .edit()
+        .putString(Constants.KEY_WEB_PORT_MODE, mode)
+        .putString(Constants.KEY_PORT, String.valueOf(fixedPort))
+        .apply();
+  }
+
   public int getPortInt() {
     int p = parsePort(text(Constants.KEY_PORT, String.valueOf(Constants.DSH_WEB_PORT)));
     return p == Constants.LAN_BRIDGE_PORT || p == Constants.SHELL_BRIDGE_PORT
@@ -174,6 +195,29 @@ public class ConfigStore {
   public void setPort(String v) {
     int p = parsePort(v);
     prefs.edit().putString(Constants.KEY_PORT, String.valueOf(p)).apply();
+  }
+
+  private String importedPortMode(org.json.JSONObject data) throws java.io.IOException {
+    if (!data.has("portMode"))
+      return com.deepseekharness.app.util.WebPortSettings.mode(null, data.optString("port"));
+    Object value = data.opt("portMode");
+    if (!(value instanceof String)) throw new java.io.IOException("SETTINGS_WEB_PORT_MODE");
+    try {
+      String mode = com.deepseekharness.app.util.WebPortSettings.requireMode((String) value);
+      if ("fixed".equals(mode)) importedPort(data);
+      return mode;
+    } catch (IllegalArgumentException invalid) {
+      throw new java.io.IOException("SETTINGS_WEB_PORT_MODE", invalid);
+    }
+  }
+
+  private int importedPort(org.json.JSONObject data) throws java.io.IOException {
+    if (!"fixed".equals(data.opt("portMode"))) return parsePort(data.optString("port"));
+    try {
+      return com.deepseekharness.app.util.WebPortSettings.fixedImport(data.opt("port"));
+    } catch (IllegalArgumentException invalid) {
+      throw new java.io.IOException("SETTINGS_WEB_FIXED_PORT", invalid);
+    }
   }
 
   private int parsePort(String v) {
@@ -417,6 +461,36 @@ public class ConfigStore {
     prefs.edit().putInt("web_fallback_for", preferred).putInt("web_fallback_port", actual).apply();
   }
 
+  /** Local browser origins are not portable settings or credentials. */
+  public java.util.Set<Integer> webOriginPorts() {
+    java.util.Set<Integer> ports = new java.util.LinkedHashSet<>();
+    // Historical releases used this origin. Empty stores simply have nothing to recover.
+    ports.add(Constants.DSH_WEB_PORT);
+    String saved = text("web_origin_ports", "");
+    for (String value : saved.split(",")) {
+      try {
+        int port = Integer.parseInt(value);
+        if (port > 0 && port <= 65535 && !com.deepseekharness.app.util.WebPortPolicy.reserved(port))
+          ports.add(port);
+      } catch (NumberFormatException ignored) {
+      }
+    }
+    return java.util.Collections.unmodifiableSet(ports);
+  }
+
+  public void rememberWebOriginPort(int port) {
+    if (port < 1 || port > 65535 || com.deepseekharness.app.util.WebPortPolicy.reserved(port))
+      return;
+    java.util.Set<Integer> ports = new java.util.LinkedHashSet<>(webOriginPorts());
+    ports.add(port);
+    StringBuilder encoded = new StringBuilder();
+    for (int value : ports) {
+      if (encoded.length() > 0) encoded.append(',');
+      encoded.append(value);
+    }
+    prefs.edit().putString("web_origin_ports", encoded.toString()).apply();
+  }
+
   public boolean isStartupRecoveryRequested() {
     return flag("web_startup_recovery_requested", false);
   }
@@ -475,6 +549,7 @@ public class ConfigStore {
     org.json.JSONObject out = new org.json.JSONObject();
     out.put("formatVersion", 1)
         .put("port", getPort())
+        .put("portMode", getWebPortMode())
         .put("workdir", getWorkdir())
         .put("permissionMode", getPermissionMode())
         .put("confirmShell", isConfirmShell())
@@ -495,6 +570,7 @@ public class ConfigStore {
     org.json.JSONObject out = new org.json.JSONObject();
     out.put("formatVersion", 1)
         .put("port", getPort())
+        .put("portMode", getWebPortMode())
         .put("workdir", getWorkdir())
         .put("permissionMode", getPermissionMode())
         .put("confirmShell", isConfirmShell())
@@ -519,8 +595,9 @@ public class ConfigStore {
 
   public void importBackupSettings(org.json.JSONObject data) throws java.io.IOException {
     SharedPreferences.Editor edit = prefs.edit();
-    if (data.has("port"))
-      edit.putString(Constants.KEY_PORT, String.valueOf(parsePort(data.optString("port"))));
+    if (data.has("port")) edit.putString(Constants.KEY_PORT, String.valueOf(importedPort(data)));
+    if (data.has("portMode") || data.has("port"))
+      edit.putString(Constants.KEY_WEB_PORT_MODE, importedPortMode(data));
     if (data.has("workdir"))
       edit.putString(Constants.KEY_WORKDIR, data.optString("workdir", Constants.DEFAULT_WORKDIR));
     if (data.has("permissionMode"))
@@ -563,6 +640,7 @@ public class ConfigStore {
 
   private static final String[] BACKUP_SETTING_KEYS = {
     Constants.KEY_PORT,
+    Constants.KEY_WEB_PORT_MODE,
     Constants.KEY_WORKDIR,
     Constants.KEY_PERMISSION_MODE,
     Constants.KEY_CONFIRM_SHELL,
@@ -586,8 +664,9 @@ public class ConfigStore {
   public java.util.Map<String, Object> prepareHostSettings(
       org.json.JSONObject data, boolean includeKey) throws java.io.IOException {
     java.util.Map<String, Object> next = hostSettingsState();
-    if (data.has("port"))
-      next.put(Constants.KEY_PORT, String.valueOf(parsePort(data.optString("port"))));
+    if (data.has("port")) next.put(Constants.KEY_PORT, String.valueOf(importedPort(data)));
+    if (data.has("portMode") || data.has("port"))
+      next.put(Constants.KEY_WEB_PORT_MODE, importedPortMode(data));
     if (data.has("workdir")) {
       String path = data.optString("workdir");
       if (path.length() > 2048 || path.indexOf('\0') >= 0)

@@ -35,6 +35,7 @@ import com.deepseekharness.app.util.WebPreviewPolicy;
 
 /** 标准版预览：系统 WebView、异步鉴权、文件选择与可恢复的加载错误。 */
 public class WebPreviewActivity extends PictureInPictureActivity implements WebFullscreenUi.Host {
+  private Runnable closeOriginRestorePreview;
   private static final String EXTRA_URL = "url";
   private static final String EXTRA_COOKIE = "cookie";
   private static final String STATE_PAGE_GENERATION = "browser-generation";
@@ -91,6 +92,8 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
     final ValueCallback<Uri[]> callback;
     final PreviewPageSession.Identity identity;
     final String pickerKey = "dsha-web-upload-" + java.util.UUID.randomUUID();
+    final com.deepseekharness.app.backup.BackupControl copyControl =
+        new com.deepseekharness.app.backup.BackupControl(null);
     ActivityResultLauncher<Intent> picker;
     WebPreviewActivity pickerOwner;
     final com.deepseekharness.app.util.BrowserUploadRequestState.Ticket<WebView, WebUploads.Session>
@@ -113,6 +116,7 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
     }
 
     boolean complete(Uri[] value) {
+      if (value == null) copyControl.cancel();
       if (!completed.compareAndSet(false, true)) return false;
       callback.onReceiveValue(value);
       return true;
@@ -216,7 +220,9 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
                           () -> {
                             WebUploads.Batch batch = null;
                             try {
-                              batch = pending.uploads.copy(app, java.util.Arrays.asList(chosen));
+                              batch =
+                                  pending.uploads.copy(
+                                      app, java.util.Arrays.asList(chosen), pending.copyControl);
                               Uri[] local = new Uri[batch.files().size()];
                               for (int i = 0; i < local.length; i++)
                                 local[i] =
@@ -293,6 +299,7 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
   @Override
   protected void onCreate(@Nullable Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
+    closeOriginRestorePreview = BrowserOriginRestore.registerPreview(this);
     microphone = new BrowserMicrophone(this);
     retained = new androidx.lifecycle.ViewModelProvider(this).get(Retained.class);
     retained.owner = new java.lang.ref.WeakReference<>(this);
@@ -1160,6 +1167,7 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
       webView = null;
     } else destroyWebView();
     super.onDestroy();
+    if (closeOriginRestorePreview != null) closeOriginRestorePreview.run();
   }
 
   @Override

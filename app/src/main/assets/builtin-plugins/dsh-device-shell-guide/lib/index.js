@@ -1,9 +1,47 @@
-/** DSHA 设备能力引导：使用 dsh 0.1.5 的消息工厂与已提交事件判重。 */
+/**
+ * DSHA 设备能力引导：使用 dsh 0.1.5 的消息工厂与已提交事件判重。
+ *
+ * 本文件同时是「DSHA 容器级常驻约定」的唯一注入点（systemPrompt 分区），因此临时文件目录的约定
+ * 也写在这里：AGENTS.md 走 workspace 指令链（按目录、受 64 KiB 预算淘汰），不适合承载每个会话
+ * 都必须读到的容器约定。目录字面量以 App 侧 util/ScratchPaths.java 为准，本文件只做兜底。
+ */
+import fs from 'node:fs';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 export const name = 'dsh-device-shell-guide';
 
-const PROMPT = [
+/** 与 app/src/main/java/com/deepseekharness/app/util/ScratchPaths.java 的 GUEST_DIRECTORY 一致。 */
+const CACHE_DIRECTORY = '/root/.cache/dsha';
+
+/** 只准备固定路径，各父级必须为真实目录，创建失败不能冒称成功。 */
+export function prepareCacheDirectory(api = fs) {
+  try {
+    let at = '';
+    for (const part of ['root', '.cache', 'dsha']) {
+      at += '/' + part;
+      let node;
+      try { node = api.lstatSync(at); }
+      catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+        api.mkdirSync(at, { mode: 0o700 });
+        node = api.lstatSync(at);
+      }
+      if (!node.isDirectory() || node.isSymbolicLink()) throw Object.assign(new Error('cache parent type'), { code: 'CACHE_PARENT_TYPE' });
+    }
+    return { ready: true, code: '' };
+  } catch (error) {
+    return { ready: false, code: /^[A-Z0-9_]+$/.test(error?.code ?? '') ? error.code : 'CACHE_UNAVAILABLE' };
+  }
+}
+
+const buildPrompt = cache => [
   '【设备操作能力 · DSHA】你正运行在用户 Android 手机的容器里，可以干预这台实体手机。',
+
+  '■ 临时文件与缓存目录（唯一约定，别到处乱放）：',
+  `  - 目录：${CACHE_DIRECTORY}（${cache.ready ? '已创建并核验' : '当前不可用：' + cache.code}；原生启动的 $DSHA_CACHE_DIR 使用此固定路径）。`,
+  '  - 放这里：Agent 自建探针脚本、中间产物、下载/解压副本、可再生诊断日志。',
+  '  - 不移动 DSH 已有系统临时文件、会话草稿或其它持久数据；不可用时说明原因，不声称创建成功。',
+  '  - 这个目录按约定可再生：App 的「清理存储空间」会清空它，且不另行确认；',
+  '    需要保留的成果写到用户工作区或 /root/Documents 下。',
 
   '■ 三条通道，按这个顺序选：',
   '  1) Ubuntu 工作区内的开发与文件操作使用普通工具；Android 设备文件写入必须走受保护的设备 shell。',
@@ -50,11 +88,16 @@ const PROMPT = [
 ].join('\n')
 
 export function apply(ctx) {
+  const cache = prepareCacheDirectory();
+  if (!cache.ready) ctx.logger?.warn?.('DSHA cache directory unavailable: ' + cache.code);
+  const PROMPT = buildPrompt(cache);
   let systemActive = false;
   const guided = new WeakSet();
   const inspected = new WeakSet();
   const isGuide = event => event?.type === 'user/message'
     && event.data?.source?.kind === 'plugin' && event.data.source.plugin === name;
+  // 约定目录在每次启动时由插件创建：AI 与脚本都不必先探测目录是否存在。
+  // 创建失败不能挡住插件加载，提示词里的约定路径仍然有效（脚本用 mkdir -p 兜底）。
   // 作用域注入不会阻塞极简配置的启动；标准配置只走系统提示，避免双份引导。
   ctx.inject(['systemPrompt'], promptCtx => {
     promptCtx.systemPrompt.section({ name: 'dsh:device-shell-guide', order: 150, text: PROMPT });

@@ -41,6 +41,10 @@ final class WebLifecycleController {
     volatile String authUrl = "";
     volatile int port;
     volatile boolean compatible;
+    volatile boolean portRetried;
+    volatile boolean forceDynamicPort;
+    volatile int bindConflict = -1;
+    volatile int requestedPort;
 
     WebRun(long generation) {
       this.generation = generation;
@@ -110,7 +114,7 @@ final class WebLifecycleController {
   /** 当前 BrowserAuth 鉴权链接；dsh 还没打印出来时为空串。 */
   public int getWebPort() {
     WebRun run = state.currentRun;
-    return run != null && run.port > 0 ? run.port : config.getPortInt();
+    return run != null && run.port > 0 ? run.port : 0;
   }
 
   public String getWebAuthUrl() {
@@ -172,7 +176,7 @@ final class WebLifecycleController {
 
   /** dsh 实际启动命令（写 pid 文件要在 exec 之前，exec 不换 pid）。 */
   public String runCoreCommand() {
-    return runCoreCommand("web", config.getPortInt(), getWebGeneration());
+    return runCoreCommand("web", config.getRequestedWebPort(), getWebGeneration());
   }
 
   private String runCoreCommand(String profile, int listenPort, long generation) {
@@ -350,15 +354,16 @@ final class WebLifecycleController {
       state.diagnostics.message(
           generation, com.deepseekharness.app.util.UiText.format("本次实际运行方式：%s", runtimeName));
       run.compatible = compatible;
-      int preferred = config.getPortInt();
+      int preferred = run.portRetried ? run.requestedPort : config.getRequestedWebPort();
+      run.requestedPort = preferred;
       com.deepseekharness.app.util.WebPortPolicy.Choice ports =
           com.deepseekharness.app.util.WebPortPolicy.choose(
-              preferred,
-              config.fallbackWebPort(preferred),
+              run.forceDynamicPort ? 0 : preferred,
+              run.forceDynamicPort ? 0 : config.fallbackWebPort(preferred),
               com.deepseekharness.app.util.WebPortPolicy::available);
       if (!lifecycle.isCurrent(generation)) return;
       run.port = ports.listen;
-      if (ports.fallback()) {
+      if (preferred > 0 && ports.fallback()) {
         reportStatus(
             generation,
             onStatus,
@@ -449,10 +454,19 @@ final class WebLifecycleController {
               public void output(String lines) {
                 synchronized (lifecycle) {
                   if (!current()) return;
+                  int conflict = com.deepseekharness.app.util.WebPortPolicy.conflictPort(lines);
+                  if (conflict > 0) run.bindConflict = conflict;
                   appendHostLog(lines);
                   state.diagnostics.output(generation, lines);
-                  if (state.diagnostics.hasExplicitStartupFailure(generation))
-                    failedWebPage(generation, state.diagnostics.failureReason());
+                  if (state.diagnostics.hasExplicitStartupFailure(generation)) {
+                    boolean pendingBindRetry =
+                        !run.portRetried
+                            && run.authUrl.isEmpty()
+                            && com.deepseekharness.app.util.WebPortPolicy.onlyBindConflict(
+                                state.diagnostics.snapshot().issues, ports.listen);
+                    if (pendingBindRetry) run.bindConflict = ports.listen;
+                    else failedWebPage(generation, state.diagnostics.failureReason());
+                  }
                 }
               }
 
@@ -469,8 +483,9 @@ final class WebLifecycleController {
                   if (!current() || authenticated()) return;
                   if (!state.recovery.failed(generation)) {
                     if (!publishAuthenticatedRun(lifecycle, run, url)) return;
-                    if (ports.fallback()) {
-                      config.rememberFallbackWebPort(ports.preferred, run.port);
+                    config.rememberFallbackWebPort(run.requestedPort, run.port);
+                    config.rememberWebOriginPort(run.port);
+                    if (ports.preferred == 0 || ports.fallback()) {
                       reportStatus(
                           generation,
                           onStatus,
@@ -506,6 +521,23 @@ final class WebLifecycleController {
                 synchronized (lifecycle) {
                   if (!lifecycle.isCurrent(generation)) return;
                   boolean hadAuth = !run.authUrl.isEmpty();
+                  if (ports.listen > 0
+                      && !run.portRetried
+                      && !hadAuth
+                      && run.bindConflict == ports.listen
+                      && com.deepseekharness.app.util.WebPortPolicy.onlyBindConflict(
+                          state.diagnostics.snapshot().issues, ports.listen)) {
+                    state.diagnostics.message(
+                        generation,
+                        "WEB_BIND_RACE_EXIT: port=" + ports.listen + " exit=" + exitCode);
+                    state.diagnostics.preserveFailure(
+                        new File(proot.getRootfsDir(), "root/dsh-web.log"),
+                        "WEB_BIND_RACE_EXIT:" + exitCode);
+                    state.diagnostics.completed(
+                        generation, "bind-conflict", "WEB_BIND_RACE_EXIT:" + exitCode);
+                    io.execute(() -> retryAfterPortConflict(generation, onStatus, safeMode));
+                    return;
+                  }
                   String exitReason =
                       com.deepseekharness.app.util.UiText.format(
                           hadAuth ? "%s 进程退出，退出码 %s（鉴权后）" : "%s 进程退出，退出码 %s（鉴权前）",
@@ -602,6 +634,52 @@ final class WebLifecycleController {
                 com.deepseekharness.app.util.UiText.text("局域网代理已就绪：同网段设备可访问，启动页可复制地址"));
           }
         });
+  }
+
+  private void retryAfterPortConflict(
+      long generation, Consumer<String> onStatus, boolean safeMode) {
+    WebRun run = webRuns.get(generation);
+    if (run == null) return;
+    try (com.deepseekharness.app.runtime.RuntimeHostPorts.Scope invocation =
+        owner.runtimeHostPorts().open()) {
+      synchronized (lifecycle) {
+        if (!lifecycle.isCurrent(generation) || !lifecycle.isStarting() || run.portRetried) return;
+      }
+      boolean stopped = processes.confirmStopped();
+      if (!com.deepseekharness.app.util.WebPortPolicy.retryBindRace(
+          run.port, run.portRetried, !run.authUrl.isEmpty(), run.bindConflict, stopped)) {
+        throw new IOException("WEB_BIND_RETRY_EXIT_UNCONFIRMED");
+      }
+      com.deepseekharness.app.util.EnvironmentTaskGate.Lease lease =
+          com.deepseekharness.app.util.EnvironmentTaskGate.tryAcquire(
+              com.deepseekharness.app.util.UiText.text("Web 端口冲突重试"));
+      if (lease == null) throw new IOException("WEB_BIND_RETRY_BUSY");
+      try (lease) {
+        lease.run(
+            () -> {
+              synchronized (lifecycle) {
+                if (!lifecycle.isCurrent(generation) || !lifecycle.isStarting() || run.portRetried)
+                  return null;
+                run.portRetried = true;
+                run.forceDynamicPort = true;
+                run.bindConflict = -1;
+                run.port = 0;
+                state.diagnostics.begin(generation, safeMode);
+                state.diagnostics.message(generation, "WEB_BIND_RACE_RETRY_DYNAMIC");
+              }
+              startWeb(generation, onStatus, safeMode, false, run.compatible);
+              return null;
+            });
+      }
+    } catch (Exception failed) {
+      synchronized (lifecycle) {
+        if (!lifecycle.isCurrent(generation)) return;
+        lifecycle.finishStart(generation);
+        String reason = com.deepseekharness.app.util.SensitiveData.redact(String.valueOf(failed));
+        recordWebFailure(generation, reason);
+        reportStatus(generation, onStatus, reason);
+      }
+    }
   }
 
   private void retryWithProot(long generation, Consumer<String> onStatus, boolean safeMode) {

@@ -122,12 +122,15 @@ function restoreConversationScroll() {
   }
 
   // 保留键盘外高度基线，同时以当前真正可见区域限制纸片，支持同宽分屏缩短。
-  replace('            const width = window.innerWidth;\n            if (stableVh === 0',
-    "            const width = window.innerWidth;\n            const visible = window.visualViewport;\n            const available = Math.max(1, Math.min(height, visible?.height ?? height));\n            root.style.setProperty('--dsha-mobile-visible-vh', `${available}px`);\n            root.style.setProperty('--dsha-mobile-viewport-top', `${visible?.offsetTop ?? 0}px`);\n            if (stableVh === 0");
-  replace("        window.addEventListener('resize', syncStableViewport);",
-    "        window.addEventListener('resize', syncStableViewport);\n        window.visualViewport?.addEventListener('resize', syncStableViewport);\n        window.visualViewport?.addEventListener('scroll', syncStableViewport);");
+  // [DSHA-PERF] 值未变不写 + 宽度变化立即 + 其余按 150ms 静默期合并。
+  // 实测（vivo V2463A / Android 16 / 120Hz）：原来每个 resize/visualViewport scroll 都无条件往
+  // :root 写两个自定义属性，整棵文档样式失效 —— 单帧 114-149ms，其中样式布局 29-40ms。
+  replace('        let stableVh = 0;\n        let stableWidth = 0;\n        const syncStableViewport = () => {\n            const height = window.innerHeight;\n            const width = window.innerWidth;\n            if (stableVh === 0',
+    "        let stableVh = 0;\n        let stableWidth = 0;\n        let lastVisibleVh = '';\n        let lastViewportTop = '';\n        let syncWidth = -1;\n        let syncTimer = 0;\n        let syncRaf = 0;\n        let syncDisposed = false;\n        const writeStableViewport = () => {\n            if (syncDisposed) return;\n            const height = window.innerHeight;\n            const width = window.innerWidth;\n            const visible = window.visualViewport;\n            const available = Math.max(1, Math.min(height, visible?.height ?? height));\n            const nextVh = `${available}px`;\n            const nextTop = `${visible?.offsetTop ?? 0}px`;\n            if (nextVh !== lastVisibleVh) {\n                lastVisibleVh = nextVh;\n                root.style.setProperty('--dsha-mobile-visible-vh', nextVh);\n            }\n            if (nextTop !== lastViewportTop) {\n                lastViewportTop = nextTop;\n                root.style.setProperty('--dsha-mobile-viewport-top', nextTop);\n            }\n            if (stableVh === 0");
+  replace("        };\n        syncStableViewport();\n        window.addEventListener('resize', syncStableViewport);",
+    "        };\n        const syncStableViewport = () => {\n            if (syncDisposed) return;\n            const width = window.innerWidth;\n            if (width !== syncWidth) {\n                syncWidth = width;\n                if (syncTimer !== 0) { clearTimeout(syncTimer); syncTimer = 0; }\n                if (syncRaf !== 0) { cancelAnimationFrame(syncRaf); syncRaf = 0; }\n                writeStableViewport();\n                return;\n            }\n            if (syncTimer !== 0) clearTimeout(syncTimer);\n            syncTimer = setTimeout(() => {\n                syncTimer = 0;\n                if (syncRaf !== 0) return;\n                syncRaf = requestAnimationFrame(() => { syncRaf = 0; writeStableViewport(); });\n            }, 150);\n        };\n        syncStableViewport();\n        window.addEventListener('resize', syncStableViewport);\n        window.visualViewport?.addEventListener('resize', syncStableViewport);\n        window.visualViewport?.addEventListener('scroll', syncStableViewport);");
   replace("            window.removeEventListener('resize', syncStableViewport);\n            root.style.removeProperty(exports.STABLE_VIEWPORT_VAR);",
-    "            window.removeEventListener('resize', syncStableViewport);\n            window.visualViewport?.removeEventListener('resize', syncStableViewport);\n            window.visualViewport?.removeEventListener('scroll', syncStableViewport);\n            root.style.removeProperty('--dsha-mobile-visible-vh');\n            root.style.removeProperty('--dsha-mobile-viewport-top');\n            root.style.removeProperty(exports.STABLE_VIEWPORT_VAR);");
+    "            syncDisposed = true;\n            if (syncTimer !== 0) { clearTimeout(syncTimer); syncTimer = 0; }\n            if (syncRaf !== 0) { cancelAnimationFrame(syncRaf); syncRaf = 0; }\n            window.removeEventListener('resize', syncStableViewport);\n            window.visualViewport?.removeEventListener('resize', syncStableViewport);\n            window.visualViewport?.removeEventListener('scroll', syncStableViewport);\n            root.style.removeProperty('--dsha-mobile-visible-vh');\n            root.style.removeProperty('--dsha-mobile-viewport-top');\n            root.style.removeProperty(exports.STABLE_VIEWPORT_VAR);");
   replace('        // appears, and the keyboard simply covers their lower half. Content that\n        // would fall behind the keyboard gets a keyboard-sized bottom padding on\n        // the scroller (layout.css.ts), which shifts nothing visible.',
     '        // appears. DSHA also caps cards with the current visible viewport: deliberate\n        // keyboard input and same-width split-screen resizing must keep all actions\n        // reachable. No keyboard-padding implementation is assumed here.');
 
@@ -155,6 +158,63 @@ function restoreConversationScroll() {
 `;
   replace('  /* ---------- sidebar panel enter / exit (see effects/panel-exit.ts) ----------',
     css + '  /* ---------- sidebar panel enter / exit (see effects/panel-exit.ts) ----------');
+  // mattskills 状态栏胶囊（dsh-mattpocock-skills-deck，conversation.input.dock order 40）在手机竖屏把尾巴
+  //   两段挤出药丸：技能列表按钮（2×2 网格）与「收起」箭头被宿主 wrapper 的 overflow:hidden 截掉，同一
+  //   会话横屏正常。393px 实测：胶囊内容 ≈415px vs 药丸 ~360px，差的正是那两段（绑票会话多一段在办票
+  //   + 两位数字计数）。收紧胶囊那套桌面留白（列间距 6→3px、每段内边距 7→4px × ~11 个子项，约省 90px）
+  //   把宽度还给尾巴，并留一条横向滚动兜底；桌面不受影响（规则在 ≤1023px 媒体查询内）。
+  //   上游同款修复已提 PR（mexiaosqwq/dsh-web-mobile#173）：那边合了、且把 upstreamCommit 升到含它的
+  //   commit 之后，这一段 delta 连同下面这个 replace 一起删掉，再重跑本工具刷新产物。
+  const capsuleTailCss = `
+  /* ---------- mattskills status capsule: keep its tail (skills button / fold
+      chevron) inside the pill on portrait ----------
+      dsh-mattpocock-skills-deck renders a capsule status bar in
+      conversation.input.dock (order 40, the row above the composer card). Its
+      own sheet deliberately never shrinks icons or counters, so as soon as the
+      capsule's content is wider than the pill the host wrapper's overflow:hidden
+      cuts the right edge and the two segments that sit last - the skills-list
+      button (2x2 grid) and the fold chevron that collapses the whole deck strip
+      - are not painted at all. Measured 2026-10-10 on a 393px portrait viewport,
+      session bound to a ticket with two-digit counters: capsule content
+      ~= 415px against a ~360px pill, i.e. ~55px short, exactly those two
+      segments; the same session on landscape shows both. Reclaim the width from
+      the capsule's desktop-sized spacing (6px column gap plus 7px padding on
+      each of ~11 children) rather than hiding any segment, and keep a
+      horizontal scroll as the fallback for the narrowest phones so the tail can
+      still be swiped into view. Desktop untouched: this block lives inside the
+      max-width: 1023px media query. */
+  [data-slot="conversation.input.dock"] .dsws-capsule {
+    gap: 1px 3px !important;
+    padding: 3px 4px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none !important;
+  }
+  [data-slot="conversation.input.dock"] .dsws-capsule::-webkit-scrollbar {
+    display: none !important;
+  }
+  [data-slot="conversation.input.dock"] .dsws-capsule .dsws-capsule-word {
+    padding: 2px 4px !important;
+    column-gap: 3px !important;
+  }
+  [data-slot="conversation.input.dock"] .dsws-capsule .dsws-seg {
+    padding: 2px 4px !important;
+    gap: 3px !important;
+  }
+  [data-slot="conversation.input.dock"] .dsws-capsule .dsws-split .dsws-split-part {
+    padding: 2px 4px !important;
+  }
+  [data-slot="conversation.input.dock"] .dsws-capsule .dsws-timebtn {
+    padding: 2px 4px !important;
+  }
+  [data-slot="conversation.input.dock"] .dsws-capsule .dsws-skillbtn,
+  [data-slot="conversation.input.dock"] .dsws-capsule .dsws-fold-toggle {
+    padding: 1px 2px !important;
+  }
+`;
+  replace(
+    '  [data-slot="conversation.input.dock"] [data-gitgraph-chip-anchor] [data-gitgraph-chip]:active {\n    transform: scale(.96) !important;\n    transition: transform .12s !important;\n  }\n',
+    '  [data-slot="conversation.input.dock"] [data-gitgraph-chip-anchor] [data-gitgraph-chip]:active {\n    transform: scale(.96) !important;\n    transition: transform .12s !important;\n  }\n' + capsuleTailCss);
   return source;
 }
 

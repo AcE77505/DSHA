@@ -4,7 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
-from runtime_input_contract import load, launcher_paths, ASSETS
+from runtime_input_contract import load, launcher_paths, bridge_protocol, ASSETS, JAVA
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,6 +40,9 @@ def verify(root=ROOT, deferred_archives=None):
     if descriptor['dshVersion'] != package['dependencies']['@deepseek-ai/dsh'] \
             or descriptor['baseVersion'] != (assets / 'offline-rootfs.version').read_text().strip():
         raise ValueError('DESCRIPTOR_SOURCE_VERSION')
+    if (root / JAVA / 'HttpShellService.java').is_file() \
+            and descriptor['bridgeProtocol'] != bridge_protocol(root):
+        raise ValueError('DESCRIPTOR_SOURCE_BRIDGE_PROTOCOL')
     expected = {'managed-runtime-inputs.json', *spec['assetFiles'],
                 *(row['asset'] for row in spec['installs'])}
     for name in spec['assetTrees']:

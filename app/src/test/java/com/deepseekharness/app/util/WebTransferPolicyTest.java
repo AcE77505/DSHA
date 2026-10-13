@@ -5,6 +5,36 @@ import static org.junit.Assert.*;
 
 public class WebTransferPolicyTest {
   @Test
+  public void uploadCapacityIncludesFiveDecimalGigabytesAndUsesCurrentSpace() {
+    assertEquals(5L * 1024 * 1024 * 1024, WebTransferPolicy.UPLOAD_LIMIT);
+    WebTransferPolicy.checkSize(5_000_000_000L, -1, WebTransferPolicy.UPLOAD_LIMIT, true);
+    WebTransferPolicy.checkSize(
+        WebTransferPolicy.UPLOAD_LIMIT, -1, WebTransferPolicy.UPLOAD_LIMIT, true);
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            WebTransferPolicy.checkSize(
+                WebTransferPolicy.UPLOAD_LIMIT + 1, -1, WebTransferPolicy.UPLOAD_LIMIT, true));
+    long reserve = WebTransferPolicy.UPLOAD_RESERVE;
+    WebTransferPolicy.checkUploadSpace(0, reserve);
+    WebTransferPolicy.checkUploadSpace(65536, reserve + 65536);
+    WebTransferPolicy.checkUploadSpace(Long.MAX_VALUE - reserve, Long.MAX_VALUE);
+    for (long[] values :
+        new long[][] {
+          {1, reserve}, {0, 0}, {0, -1}, {-1, Long.MAX_VALUE}, {Long.MAX_VALUE, Long.MAX_VALUE}
+        })
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> WebTransferPolicy.checkUploadSpace(values[0], values[1]));
+    // 同一写入者开始时有空间不代表随后其他进程占盘后仍能继续。
+    WebTransferPolicy.checkUploadSpace(65536, reserve + 65536);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> WebTransferPolicy.checkUploadSpace(65536, reserve + 65535));
+    assertEquals(2L * 1024 * 1024 * 1024, WebTransferPolicy.DOWNLOAD_LIMIT);
+  }
+
+  @Test
   public void shareMimeRejectsHeaderSyntaxAndKeepsActualType() {
     assertEquals("text/markdown", WebTransferPolicy.mimeType("text/markdown"));
     assertEquals(

@@ -86,6 +86,10 @@ final class RuntimeLauncher {
       com.deepseekharness.app.util.ColdInstallPlan.applyEnvironment(
           builder.environment(), spec.coldMode);
     builder.environment().putAll(spec.environment);
+    // 固定清理契约不接受调用方环境覆盖。
+    builder
+        .environment()
+        .put("DSHA_CACHE_DIR", com.deepseekharness.app.util.ScratchPaths.GUEST_DIRECTORY);
   }
 
   Process start(String command, LaunchSpec spec) throws IOException {

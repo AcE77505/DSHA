@@ -3251,24 +3251,59 @@ function installPhoneChrome(ctx) {
         // reachable. No keyboard-padding implementation is assumed here.
         let stableVh = 0;
         let stableWidth = 0;
-        const syncStableViewport = () => {
+        let lastVisibleVh = '';
+        let lastViewportTop = '';
+        let syncWidth = -1;
+        let syncTimer = 0;
+        let syncRaf = 0;
+        let syncDisposed = false;
+        const writeStableViewport = () => {
+            if (syncDisposed) return;
             const height = window.innerHeight;
             const width = window.innerWidth;
             const visible = window.visualViewport;
             const available = Math.max(1, Math.min(height, visible?.height ?? height));
-            root.style.setProperty('--dsha-mobile-visible-vh', `${available}px`);
-            root.style.setProperty('--dsha-mobile-viewport-top', `${visible?.offsetTop ?? 0}px`);
+            const nextVh = `${available}px`;
+            const nextTop = `${visible?.offsetTop ?? 0}px`;
+            if (nextVh !== lastVisibleVh) {
+                lastVisibleVh = nextVh;
+                root.style.setProperty('--dsha-mobile-visible-vh', nextVh);
+            }
+            if (nextTop !== lastViewportTop) {
+                lastViewportTop = nextTop;
+                root.style.setProperty('--dsha-mobile-viewport-top', nextTop);
+            }
             if (stableVh === 0 || height > stableVh || width !== stableWidth) {
                 stableVh = height;
                 stableWidth = width;
                 root.style.setProperty(exports.STABLE_VIEWPORT_VAR, `${height}px`);
             }
         };
+        const syncStableViewport = () => {
+            if (syncDisposed) return;
+            const width = window.innerWidth;
+            if (width !== syncWidth) {
+                syncWidth = width;
+                if (syncTimer !== 0) { clearTimeout(syncTimer); syncTimer = 0; }
+                if (syncRaf !== 0) { cancelAnimationFrame(syncRaf); syncRaf = 0; }
+                writeStableViewport();
+                return;
+            }
+            if (syncTimer !== 0) clearTimeout(syncTimer);
+            syncTimer = setTimeout(() => {
+                syncTimer = 0;
+                if (syncRaf !== 0) return;
+                syncRaf = requestAnimationFrame(() => { syncRaf = 0; writeStableViewport(); });
+            }, 150);
+        };
         syncStableViewport();
         window.addEventListener('resize', syncStableViewport);
         window.visualViewport?.addEventListener('resize', syncStableViewport);
         window.visualViewport?.addEventListener('scroll', syncStableViewport);
         return () => {
+            syncDisposed = true;
+            if (syncTimer !== 0) { clearTimeout(syncTimer); syncTimer = 0; }
+            if (syncRaf !== 0) { cancelAnimationFrame(syncRaf); syncRaf = 0; }
             window.removeEventListener('resize', syncStableViewport);
             window.visualViewport?.removeEventListener('resize', syncStableViewport);
             window.visualViewport?.removeEventListener('scroll', syncStableViewport);
@@ -8510,6 +8545,52 @@ exports.MISC_CSS = `@media (max-width: 1023px) and (pointer: coarse) {
   [data-slot="conversation.input.dock"] [data-gitgraph-chip-anchor] [data-gitgraph-chip]:active {
     transform: scale(.96) !important;
     transition: transform .12s !important;
+  }
+
+  /* ---------- mattskills status capsule: keep its tail (skills button / fold
+      chevron) inside the pill on portrait ----------
+      dsh-mattpocock-skills-deck renders a capsule status bar in
+      conversation.input.dock (order 40, the row above the composer card). Its
+      own sheet deliberately never shrinks icons or counters, so as soon as the
+      capsule's content is wider than the pill the host wrapper's overflow:hidden
+      cuts the right edge and the two segments that sit last - the skills-list
+      button (2x2 grid) and the fold chevron that collapses the whole deck strip
+      - are not painted at all. Measured 2026-10-10 on a 393px portrait viewport,
+      session bound to a ticket with two-digit counters: capsule content
+      ~= 415px against a ~360px pill, i.e. ~55px short, exactly those two
+      segments; the same session on landscape shows both. Reclaim the width from
+      the capsule's desktop-sized spacing (6px column gap plus 7px padding on
+      each of ~11 children) rather than hiding any segment, and keep a
+      horizontal scroll as the fallback for the narrowest phones so the tail can
+      still be swiped into view. Desktop untouched: this block lives inside the
+      max-width: 1023px media query. */
+  [data-slot="conversation.input.dock"] .dsws-capsule {
+    gap: 1px 3px !important;
+    padding: 3px 4px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none !important;
+  }
+  [data-slot="conversation.input.dock"] .dsws-capsule::-webkit-scrollbar {
+    display: none !important;
+  }
+  [data-slot="conversation.input.dock"] .dsws-capsule .dsws-capsule-word {
+    padding: 2px 4px !important;
+    column-gap: 3px !important;
+  }
+  [data-slot="conversation.input.dock"] .dsws-capsule .dsws-seg {
+    padding: 2px 4px !important;
+    gap: 3px !important;
+  }
+  [data-slot="conversation.input.dock"] .dsws-capsule .dsws-split .dsws-split-part {
+    padding: 2px 4px !important;
+  }
+  [data-slot="conversation.input.dock"] .dsws-capsule .dsws-timebtn {
+    padding: 2px 4px !important;
+  }
+  [data-slot="conversation.input.dock"] .dsws-capsule .dsws-skillbtn,
+  [data-slot="conversation.input.dock"] .dsws-capsule .dsws-fold-toggle {
+    padding: 1px 2px !important;
   }
 
   /* ---------- ask question composer (ask_user_question): kill iOS Safari

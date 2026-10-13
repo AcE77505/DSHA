@@ -5,6 +5,15 @@ import static org.junit.Assert.*;
 
 public class PictureInPicturePolicyTest {
   @Test
+  public void sameSizeSubtreeRequestsDispatchAndIdleGeometryStaysCached() {
+    assertTrue(PictureInPicturePolicy.mustDispatchChildLayout(1440, 3016, -1, -1, false));
+    assertTrue(PictureInPicturePolicy.mustDispatchChildLayout(1440, 3016, 1080, 3016, false));
+    assertTrue(PictureInPicturePolicy.mustDispatchChildLayout(1440, 3016, 1440, 2048, false));
+    assertTrue(PictureInPicturePolicy.mustDispatchChildLayout(1440, 3016, 1440, 3016, true));
+    assertFalse(PictureInPicturePolicy.mustDispatchChildLayout(1440, 3016, 1440, 3016, false));
+  }
+
+  @Test
   public void actualWindowSizeReflowsHeightAndPreservesLogicalWidth() {
     assertArrayEquals(
         new int[] {1080, 1440},

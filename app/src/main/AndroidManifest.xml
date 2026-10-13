@@ -57,6 +57,7 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.DeepseekHarness">
 
+        <activity android:name=".ui.BrowserOriginRestoreActivity" android:exported="false" />
         <activity android:name=".ui.ModelSetupActivity" android:exported="false" />
         <activity android:name=".ui.CommunityActivity" android:exported="false" />
         <activity android:name=".ui.OnboardingPrepareActivity" android:exported="false" />

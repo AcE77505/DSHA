@@ -76,6 +76,19 @@ class DescriptorSourceTest(unittest.TestCase):
         (self.assets / 'runtime-descriptor.json').write_text(json.dumps(self.value))
         with self.assertRaisesRegex(ValueError, 'SOURCE_IDENTITY'):self.verify()
 
+    def test_actual_bridge_protocol_is_verified_separately_from_its_source_digest(self):
+        bridge = self.root / 'app/src/main/java/com/deepseekharness/app/HttpShellService.java'
+        bridge.write_text('private static final int BRIDGE_PROTOCOL = 4;\n', encoding='utf-8')
+        self.manifest['launcherSources'].append('HttpShellService.java')
+        (self.assets / 'managed-runtime-inputs.json').write_text(json.dumps(self.manifest))
+        self.value['inputs']['managed-runtime-inputs.json'] = gate.digest(self.assets / 'managed-runtime-inputs.json')
+        self.value['launcherInputs']['HttpShellService.java'] = gate.digest(bridge)
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'BRIDGE_PROTOCOL'):self.verify()
+        self.value['bridgeProtocol'] = 4
+        self.save()
+        self.assertEqual(['offline-rootfs.bin'], self.verify()['deferredArchives'])
+
 
 if __name__ == '__main__':
     unittest.main()

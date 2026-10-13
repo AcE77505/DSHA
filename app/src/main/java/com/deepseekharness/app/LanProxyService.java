@@ -49,14 +49,16 @@ public final class LanProxyService {
   private static final class AuthState {
     final String cookie;
     final long generation;
+    final int backendPort;
 
-    AuthState(String cookie, long generation) {
+    AuthState(String cookie, long generation, int backendPort) {
       this.cookie = cookie;
       this.generation = generation;
+      this.backendPort = backendPort;
     }
   }
 
-  private static final AuthState NO_DSH_AUTH = new AuthState("", 0);
+  private static final AuthState NO_DSH_AUTH = new AuthState("", 0, 0);
   private static volatile AuthState dshAuth = NO_DSH_AUTH;
 
   /**
@@ -96,7 +98,7 @@ public final class LanProxyService {
   private static volatile ProxyRun activeRun;
   private static long nextRunEpoch;
   /* Retained for the package-private rewriteResponse(String) test helper. */
-  private static volatile int backendPort = DEFAULT_BACKEND_PORT;
+  private static volatile int backendPort;
   private static volatile String logPath = "";
   private static final Object LOG_LOCK = new Object();
   private static final java.util.Map<String, Long> lastConnLog =
@@ -136,6 +138,14 @@ public final class LanProxyService {
    * caller must have obtained it from a loopback 303 exchange.
    */
   public static synchronized boolean setDshAuthCookie(String cookie, long generation) {
+    // Historical callers do not prove a backend port; never guess another service's address.
+    return setDshAuthCookie(cookie, generation, 0);
+  }
+
+  public static synchronized boolean setDshAuthCookie(String cookie, long generation, int backend) {
+    if (backend < 1
+        || backend > 65535
+        || com.deepseekharness.app.util.WebPortPolicy.reserved(backend)) return false;
     if (!isValidDshCookie(cookie) || generation <= 0) return false;
     String normalized = cookie.trim();
     ProxyRun run = activeRun;
@@ -143,11 +153,11 @@ public final class LanProxyService {
     // same-generation cookie refresh is safe: existing workers retain an
     // old AuthState snapshot and fail the identity check below, while new
     // requests receive only the replacement cookie.
-    if (run != null && run.generation != generation) {
+    if (run != null && (run.generation != generation || run.backendPort != backend)) {
       deactivateRunLocked(run);
       closeRunSockets(run);
     }
-    dshAuth = new AuthState(normalized, generation);
+    dshAuth = new AuthState(normalized, generation, backend);
     return true;
   }
 
@@ -192,7 +202,9 @@ public final class LanProxyService {
   private static synchronized AuthSnapshot snapshotDshAuth(ProxyRun run) {
     if (!isActiveRunLocked(run)) return null;
     AuthState current = dshAuth;
-    return hasDshAuth(current, run.generation) ? new AuthSnapshot(current) : null;
+    return hasDshAuth(current, run.generation) && current.backendPort == run.backendPort
+        ? new AuthSnapshot(current)
+        : null;
   }
 
   private static synchronized boolean isCurrentDshAuth(ProxyRun run, AuthSnapshot snapshot) {
@@ -252,7 +264,7 @@ public final class LanProxyService {
 
   /** Compatibility overload: without an exchanged BrowserAuth cookie it does nothing. */
   public static synchronized void start(String rootfsDir, Context ctx) {
-    start(rootfsDir, ctx, DEFAULT_BACKEND_PORT, dshAuth.generation);
+    start(rootfsDir, ctx, dshAuth.backendPort, dshAuth.generation);
   }
 
   /** Compatibility overload retained for service callers. */
@@ -269,8 +281,11 @@ public final class LanProxyService {
     }
     if (isActiveRunLocked(activeRun)) return;
     if (!hasDshAuth(generation)) return;
-    int resolvedBackend =
-        backend > 0 && backend <= 65535 && backend != LAN_PORT ? backend : DEFAULT_BACKEND_PORT;
+    if (backend < 1
+        || backend > 65535
+        || com.deepseekharness.app.util.WebPortPolicy.reserved(backend)
+        || dshAuth.backendPort != backend) return;
+    int resolvedBackend = backend;
     getLanToken(ctx);
     if (!isValidLanToken(LAN_TOKEN.current())) return;
     logPath = rootfsDir == null ? "" : rootfsDir + "/root/dsh-lan.log";

@@ -159,16 +159,20 @@ public final class ColdInstallPlan {
   }
 
   public static String probeScript() {
-    return "set -eu\nprobe=\"$1\"\n"
+    return "set -eu\nprintf '\\nDSHA_PROBE_STAGE=SHELL\\n'\nprobe=\"$1\"\n"
         + "[ ! -e \"$probe\" ] && [ ! -L \"$probe\" ] || exit 64\n"
         + "/bin/mkdir -- \"$probe\"\n"
+        + "printf 'DSHA_PROBE_STAGE=MKDIR\\n'\n"
         + "trap '/bin/rm -f -- \"$probe/plain\"; /bin/rmdir -- \"$probe\"' EXIT\n"
         + "/bin/bash -c 'printf DSHA_COLD_PROBE' > \"$probe/plain\"\n"
+        + "printf 'DSHA_PROBE_STAGE=BASH\\n'\n"
         + "/usr/bin/python3 -I -S -c "
         + ShellQuote.arg(
-            "import hashlib, os, sqlite3, ssl, sys; "
+            "import sys; print('DSHA_PROBE_STAGE=PYTHON', flush=True); "
+                + "import hashlib, os, sqlite3, ssl; print('DSHA_PROBE_STAGE=IMPORTS', flush=True); "
                 + "p=sys.argv[1]; assert open(p,'rb').read()==b'DSHA_COLD_PROBE'; "
                 + "f=open(p,'wb'); f.write(b'DSHA_COLD_VERIFIED'); f.flush(); os.fsync(f.fileno()); f.close(); "
+                + "print('DSHA_PROBE_STAGE=FSYNC', flush=True); "
                 + "assert open(p,'rb').read()==b'DSHA_COLD_VERIFIED'; assert hashlib.sha256(b'probe').digest(); "
                 + "assert sqlite3.sqlite_version; assert ssl.OPENSSL_VERSION")
         + " \"$probe/plain\"\n"

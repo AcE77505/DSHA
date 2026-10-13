@@ -2,6 +2,7 @@ package com.deepseekharness.app.core;
 
 import com.deepseekharness.app.util.DshAuthLog;
 import com.deepseekharness.app.util.WebPortPolicy;
+import com.deepseekharness.app.util.WebAuthLineBuffer;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 
@@ -28,7 +29,7 @@ final class WebOutputSession {
   }
 
   void drain(Process process, Events events) {
-    StringBuilder scan = new StringBuilder();
+    WebAuthLineBuffer scan = new WebAuthLineBuffer();
     DshAuthLog log = new DshAuthLog();
     try (Reader in = new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)) {
       char[] buffer = new char[8192];
@@ -36,13 +37,16 @@ final class WebOutputSession {
       while ((count = in.read(buffer)) != -1) {
         String chunk = new String(buffer, 0, count);
         if (!events.current()) continue;
-        scan.append(chunk);
-        if (scan.length() > 64_384) scan.delete(0, scan.length() - 64_384);
+        String complete = scan.append(chunk);
         events.output(log.append(chunk));
         if (events.current() && !events.authenticated()) {
-          String url = WebPortPolicy.authentication(scan.toString(), listenPort);
+          String url = WebPortPolicy.authentication(complete, listenPort);
           if (url != null) events.authentication(url);
         }
+      }
+      if (events.current() && !events.authenticated()) {
+        String url = WebPortPolicy.authentication(scan.finish(), listenPort);
+        if (url != null) events.authentication(url);
       }
     } catch (IOException | RuntimeException failure) {
       if (events.current()) reportReadFailure(events, failure);

@@ -7,6 +7,45 @@ import static org.junit.Assert.*;
 
 public class WebPortPolicyTest {
   @Test
+  public void automaticPolicyUsesKernelAllocationAndOnlyItsAvailablePriorPort() throws Exception {
+    assertEquals(
+        0,
+        WebPortPolicy.choose(
+                0,
+                0,
+                port -> {
+                  throw new AssertionError();
+                })
+            .listen);
+    assertEquals(45678, WebPortPolicy.choose(0, 45678, port -> true).listen);
+    assertEquals(0, WebPortPolicy.choose(0, 45678, port -> false).listen);
+    assertEquals(
+        0,
+        WebPortPolicy.choose(
+                0,
+                3090,
+                port -> {
+                  throw new AssertionError();
+                })
+            .listen);
+  }
+
+  @Test
+  public void bindRaceNeedsExactPortExitAndAnUnusedRetryBeforeAuthentication() {
+    assertTrue(WebPortPolicy.retryBindRace(45678, false, false, 45678, true));
+    assertFalse(WebPortPolicy.retryBindRace(45678, true, false, 45678, true));
+    assertFalse(WebPortPolicy.retryBindRace(45678, false, true, 45678, true));
+    assertFalse(WebPortPolicy.retryBindRace(45678, false, false, 45679, true));
+    assertFalse(WebPortPolicy.retryBindRace(45678, false, false, 45678, false));
+    String conflict = "@deepseek-ai/dsh-host-webserver: listen EADDRINUSE 127.0.0.1:45678";
+    assertTrue(WebPortPolicy.onlyBindConflict(java.util.Map.of("", conflict), 45678));
+    assertFalse(
+        WebPortPolicy.onlyBindConflict(java.util.Map.of("", conflict, "plugin", "broken"), 45678));
+    assertFalse(WebPortPolicy.onlyBindConflict(java.util.Map.of("", conflict), 45679));
+    assertFalse(WebPortPolicy.onlyBindConflict(java.util.Map.of(), 45678));
+  }
+
+  @Test
   public void retainsPreferredAndReusesOnlyAvailableCachedPort() throws Exception {
     assertEquals(3080, WebPortPolicy.choose(3080, 40000, port -> true).listen);
     assertEquals(40000, WebPortPolicy.choose(3080, 40000, port -> port == 40000).listen);
@@ -58,6 +97,9 @@ public class WebPortPolicyTest {
     assertNull(WebPortPolicy.authentication("dsh web: http://localhost:45678/?token=" + token, 0));
     assertNull(WebPortPolicy.authentication("dsh web: http://127.0.0.1:3090/?token=" + token, 0));
     assertNull(WebPortPolicy.authentication("dsh web: " + url, 3080));
+    assertNull(WebPortPolicy.authentication("plugin example " + url, 45678));
+    assertEquals(url, WebPortPolicy.authentication("dsh web: " + url, 45678));
+    assertNull(WebPortPolicy.authentication("dsh web: " + url, 45679));
   }
 
   @Test

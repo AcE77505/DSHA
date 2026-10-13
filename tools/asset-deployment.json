@@ -73,7 +73,17 @@
     "ubuntu-tools.bin",
     "ubuntu-tools.layout",
     "ubuntu-tools.manifest.json",
-    "workspace-directory-policy-patch.json"
+    "workspace-directory-policy-patch.json",
+    "app-integration/browser-origin-state.js",
+    "app-integration/browser-origin-restore.html",
+    "frontend-static-cache-patch.json",
+    "sidebar-layout-recovery-patch.json",
+    "dsha-layout-recovery.js",
+    "plugin-client-seeds.py",
+    "client-seed-proof.json",
+    "client-peer-attestations.json",
+    "dsha-portable",
+    "portable-tools.manifest.json"
   ],
   "packagedTrees": [
     "app-integration",
@@ -83,7 +93,8 @@
     "recovery-web-integration",
     "runtime-fs",
     "session-compat",
-    "web-integration"
+    "web-integration",
+    "pc-migration"
   ],
   "sourceInputs": [
     "offline-rootfs.bin",

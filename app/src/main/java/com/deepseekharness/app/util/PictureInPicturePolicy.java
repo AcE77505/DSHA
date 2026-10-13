@@ -64,4 +64,14 @@ public final class PictureInPicturePolicy {
     long fitted = Math.round((double) preferred[0] * windowHeight / windowWidth);
     return new int[] {preferred[0], (int) Math.max(1, Math.min(16384, fitted))};
   }
+
+  /** 几何缓存不吞子树的布局请求；空闲和单纯窗口缩放仍复用逻辑布局。 */
+  public static boolean mustDispatchChildLayout(
+      int viewportWidth,
+      int viewportHeight,
+      int cachedWidth,
+      int cachedHeight,
+      boolean childRequestedLayout) {
+    return childRequestedLayout || viewportWidth != cachedWidth || viewportHeight != cachedHeight;
+  }
 }

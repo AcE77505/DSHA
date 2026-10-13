@@ -33,6 +33,9 @@ dsh-web-mobile）的实体随离线 rootfs 烘焙在 /root/dsha-*，但 dsh 只�
   DSHA_TEST_ROOT=/tmp/fakeroot DSH_HOME=/tmp/fakeroot/root/.dsh python3 register-builtin-plugins.py
 """
 import json
+import hashlib
+import tempfile
+import stat
 import os
 import shutil
 import sys
@@ -69,6 +72,9 @@ _REGISTRY_ROWS, _OFFICIAL_ROWS = _registry()
 DEFAULT_BUILTINS = tuple(row['name'] for row in _REGISTRY_ROWS)
 OFFICIAL_BUNDLES = tuple(row['name'] for row in _OFFICIAL_ROWS)
 BUILTIN_DIRECTORIES = {row['name']: row['guestDirectory'] for row in _REGISTRY_ROWS}
+# APK 独占的插件（源码随包提供，不进用户备份，也不允许用户移除）：由注册表声明，
+# 不要在别处再写一份硬编码名单。
+INTERNAL_BUILTINS = tuple(row['name'] for row in _REGISTRY_ROWS if row.get('internal'))
 
 PROFILE_PATCH_TEMPLATE = (
     "# Your patch layer for this dsh profile, applied after every bundle layer:\n"
@@ -427,6 +433,99 @@ def builtin_names():
 
 # ================= profile 读写 =================
 
+def vscreen_workaround_text(text):
+    """只移除已知 id/name 两字段 insert；不解析或重写用户表达式、配置与注释。"""
+    lines = text.splitlines(keepends=True); output = []; index = 0; removed = 0
+    while index < len(lines):
+        header = re.fullmatch(r'- insert:[ \t]*(#[^\r\n]*)?\r?\n?', lines[index])
+        if header is None:
+            output.append(lines[index]); index += 1; continue
+        end = index + 1
+        while end < len(lines) and (not lines[end].strip() or lines[end].lstrip().startswith('#') or lines[end].startswith((' ', '\t'))): end += 1
+        body = lines[index + 1:end]
+        starts = [i for i, line in enumerate(body) if re.match(r' +-[ \t]', line)]
+        if not starts:
+            output.extend(lines[index:end]); index = end; continue
+        indentation = len(body[starts[0]]) - len(body[starts[0]].lstrip())
+        starts = [i for i in starts if len(body[i]) - len(body[i].lstrip()) == indentation]
+        retained = body[:starts[0]]; remaining = 0
+        for at, stop in zip(starts, starts[1:] + [len(body)]):
+            item = body[at:stop]; fields = {}; allowed = True; flow_accepted = False
+            if len([line for line in item if line.strip() and not line.lstrip().startswith('#')]) == 1:
+                flow = re.fullmatch(r"[ \t]*-[ \t]*\{[ \t]*(id|name):[ \t]*(['\"]?)(dsh-tool-vscreen)\2[ \t]*,[ \t]*(id|name):[ \t]*(['\"]?)(dsh-tool-vscreen)\5[ \t]*\}[ \t]*(?:#[^\r\n]*)?\r?\n?", next(line for line in item if line.strip() and not line.lstrip().startswith('#')))
+                if flow and flow[1] != flow[4]:
+                    fields = {flow[1]: flow[3], flow[4]: flow[6]}; flow_accepted = True
+            for line in item:
+                if not line.strip() or line.lstrip().startswith('#'): continue
+                if flow_accepted: break
+                match = re.fullmatch(r"[ \t]*(?:-[ \t]+)?(id|name):[ \t]*(['\"]?)(dsh-tool-vscreen)\2[ \t]*(?:#[^\r\n]*)?\r?\n?", line)
+                if not match or match[1] in fields: allowed = False; break
+                fields[match[1]] = match[3]
+            if allowed and set(fields) == {'id', 'name'}:
+                removed += 1
+                # 原有注释仍留在原次序；带字段的行尾注释也保留。
+                for line in item:
+                    if not line.strip() or line.lstrip().startswith('#'): retained.append(line)
+                    elif '#' in line: retained.append(' ' * indentation + line[line.index('#'):])
+            else:
+                retained.extend(item); remaining += 1
+        output.append(lines[index] if remaining else '- insert: []' + (' ' + header[1] if header[1] else '') + ('\r\n' if lines[index].endswith('\r\n') else '\n'))
+        output.extend(retained); index = end
+    return ''.join(output), removed
+
+
+def migrate_vscreen_workaround():
+    """固定签名 bundle 已准备后，保留原 patch 再原子去除唯一已知 workaround。"""
+    directory = entity_dir('dsh-tool-vscreen')
+    if directory is None: return 0
+    bundle = local(os.path.join(directory, 'cordis.patch.yml'))
+    if not os.path.isfile(bundle): return 0
+    with open(bundle, encoding='utf8') as source: fixed = source.read()
+    if 'dsh-tool-vscreen' not in fixed or 'insert:' not in fixed: return 0
+    path = local(PATCH_FILE)
+    if not os.path.lexists(path): return 0
+    try:
+        before = os.lstat(path)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > 1024 * 1024: raise RuntimeError('VSCREEN_PATCH_TYPE')
+        def read_exact():
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
+            with os.fdopen(descriptor, 'rb') as stream:
+                opened = os.fstat(stream.fileno())
+                if not stat.S_ISREG(opened.st_mode) or opened.st_size > 1024 * 1024 or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino): raise RuntimeError('VSCREEN_PATCH_CHANGED')
+                data = stream.read(1024 * 1024 + 1)
+                after = os.fstat(stream.fileno())
+                if len(data) != opened.st_size or (after.st_size, after.st_mtime_ns) != (opened.st_size, opened.st_mtime_ns): raise RuntimeError('VSCREEN_PATCH_CHANGED')
+                return data
+        original = read_exact(); updated, removed = vscreen_workaround_text(original.decode('utf8'))
+        if not removed: return 0
+        retained = path + '.dsha-vscreen-original-' + hashlib.sha256(original).hexdigest()
+        def sync_parent():
+            if os.name == 'nt': return
+            descriptor = os.open(os.path.dirname(path), os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+            try: os.fsync(descriptor)
+            finally: os.close(descriptor)
+        try:
+            descriptor = os.open(retained, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+            with os.fdopen(descriptor, 'wb') as stream:
+                stream.write(original); stream.flush(); os.fsync(stream.fileno())
+        except FileExistsError:
+            if os.path.islink(retained) or not os.path.isfile(retained): raise RuntimeError('VSCREEN_ORIGINAL_TYPE')
+            with open(retained, 'rb') as stream:
+                if stream.read(1024 * 1024 + 1) != original: raise RuntimeError('VSCREEN_ORIGINAL_CHANGED')
+        sync_parent()
+        with tempfile.NamedTemporaryFile(prefix='.dsha-vscreen-', dir=os.path.dirname(path), delete=False) as stream:
+            temporary = stream.name
+            stream.write(updated.encode('utf8')); stream.flush(); os.fsync(stream.fileno())
+        try:
+            if read_exact() != original: raise RuntimeError('VSCREEN_PATCH_CHANGED')
+            os.chmod(temporary, stat.S_IMODE(before.st_mode)); os.replace(temporary, path)
+            sync_parent()
+        finally:
+            if os.path.exists(temporary): os.unlink(temporary)
+        return removed
+    except (OSError, UnicodeError) as error:
+        raise RuntimeError('VSCREEN_PATCH_MIGRATION_FAILED') from error
+
 def read_manifest():
     if not os.path.isfile(local(MANIFEST)):
         return None
@@ -664,6 +763,9 @@ def disable_plugin(name):
     """--disable：写禁用标记、移出 bundles，并从加载路径摘除系统插件旧实体。"""
     lines = ["== " + time.strftime("%Y-%m-%d %H:%M:%S") + " 禁用 " + name]
     try:
+        if name in INTERNAL_BUILTINS:
+            raise RuntimeError("该插件随 APK 提供且不可停用（硬约束）：" + name)
+        if name == 'dsh-tool-vscreen': migrate_vscreen_workaround()
         d = entity_dir(name)
         if d is not None:
             os.makedirs(os.path.dirname(marker_path(name)), exist_ok=True)
@@ -721,6 +823,7 @@ def register():
     lines = ["== " + time.strftime("%Y-%m-%d %H:%M:%S")]
     try:
         linked = ensure_runtime_modules()
+        migrate_vscreen_workaround()
         if linked: lines.append('已补充 %d 个共享运行时模块链接' % linked)
     except (OSError, RuntimeError) as error:
         print('BUILTIN_REGISTER_FAIL: ' + str(error))
@@ -730,6 +833,7 @@ def register():
     present = {}
     disabled = {}
     skipped = []
+    forced = []
     missing = []
     for name in names:
         d = entity_dir(name)
@@ -737,6 +841,18 @@ def register():
             missing.append(name)
             continue
         if is_disabled(name):
+            if name in INTERNAL_BUILTINS:
+                # APK 独占的插件（例如删除确认守卫）不允许被停用：它能被一个空标记
+                # 关掉的话就等于没有约束。原生侧 WebLifecycleController /
+                # StartupRepairs 早已按同一口径挡住停用与替换，这里补齐 guest 侧，
+                # 顺手把标记清掉，让状态收敛而不是每次启动都矛盾。
+                try:
+                    os.remove(marker_path(name))
+                except OSError:
+                    pass
+                forced.append(name)
+                present[name] = d
+                continue
             skipped.append(name)  # 用户禁用过的：尊重标记，不补回
             disabled[name] = d
             continue
@@ -801,6 +917,8 @@ def register():
             print('BUILTIN_REGISTER_FAIL: ' + str(error))
             return 1
 
+    if forced:
+        lines.append("APK 独占插件不可停用，已恢复：%s" % ", ".join(forced))
     if skipped:
         lines.append("尊重禁用标记跳过：%s" % ", ".join(skipped))
     if not present:

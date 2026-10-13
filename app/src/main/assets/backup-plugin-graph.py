@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """把 npm/pnpm 的实际依赖关系保存成普通文件与路径无关的引用图。"""
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -8,7 +9,7 @@ import re
 
 POOL_MARKER = '.dsha-dependency-pool.json'
 CORE = {'@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'}
-SHARED = {'@deepseek-ai/cordis', '@deepseek-ai/schemastery', 'react', 'react-dom'}
+SHARED = {'@deepseek-ai/cordis', '@deepseek-ai/schemastery'}
 
 
 class Records(list):
@@ -62,6 +63,9 @@ def archive_plugins(root, stage, copy_data, skip, checks, valid_name, global_nm,
         requirements = {}
         runtime = pkg.get('dependencies') or {}
         peers = pkg.get('peerDependencies') or {}
+        spec = importlib.util.spec_from_file_location('backup_client_seeds', Path(__file__).with_name('plugin-client-seeds.py'))
+        seed_reader = importlib.util.module_from_spec(spec); spec.loader.exec_module(seed_reader)
+        client_peers = seed_reader.client_peers(source, pkg, global_nm, resolve_module)
         optional = set(pkg.get('optionalDependencies') or {})
         for section in ('dependencies', 'peerDependencies', 'optionalDependencies'):
             values = pkg.get(section) or {}
@@ -69,7 +73,7 @@ def archive_plugins(root, stage, copy_data, skip, checks, valid_name, global_nm,
                 raise ValueError('插件依赖声明必须是对象')
             requirements.update(values)
         optional.update(name for name, meta in (pkg.get('peerDependenciesMeta') or {}).items()
-                        if isinstance(meta, dict) and meta.get('optional'))
+                        if name not in runtime and isinstance(meta, dict) and meta.get('optional'))
         # 未列入 manifest 的随包依赖同样保留；裸资源目录维持原相对位置。
         embedded = source / 'node_modules'
         # 受管插件的 node_modules 可借用整个宿主池；只归档其明确依赖，不能连带打包整个 dsh。
@@ -98,6 +102,8 @@ def archive_plugins(root, stage, copy_data, skip, checks, valid_name, global_nm,
                 continue
             dependency = resolve_module(source, name, global_nm)
             if dependency is None:
+                if name in client_peers and name in peers and name not in runtime:
+                    continue
                 if name in optional:
                     continue
                 # 旧插件把浏览器宿主接口/编译期类型列为 dsh peer，未必存在同名 npm 包。

@@ -36,6 +36,7 @@ import java.util.ArrayList;
 /** 兼容版浏览器：鉴权、文件上传、错误恢复与系统 WebView 入口保持一致。 */
 public final class GeckoPreviewActivity extends PictureInPictureActivity
     implements WebFullscreenUi.Host {
+  private Runnable closeOriginRestorePreview;
   private GeckoSession session;
   private GeckoView browser;
   private FrameLayout container;
@@ -79,6 +80,8 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
     final WebUploads.Session uploads;
     final PreviewPageSession.Identity identity;
     final String pickerKey = "gecko-upload-" + java.util.UUID.randomUUID();
+    final com.deepseekharness.app.backup.BackupControl copyControl =
+        new com.deepseekharness.app.backup.BackupControl(null);
     final com.deepseekharness.app.util.BrowserUploadRequestState.Ticket<
             GeckoSession, WebUploads.Session>
         ticket;
@@ -109,6 +112,7 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
     }
 
     boolean dismiss() {
+      copyControl.cancel();
       return complete(prompt.dismiss());
     }
   }
@@ -200,6 +204,7 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
   @Override
   protected void onCreate(Bundle saved) {
     super.onCreate(saved);
+    closeOriginRestorePreview = BrowserOriginRestore.registerPreview(this);
     controller = HarnessController.get(this);
     retained = new androidx.lifecycle.ViewModelProvider(this).get(Retained.class);
     previewAuth = new PreviewAuth(this);
@@ -703,7 +708,7 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
               WebUploads.Batch batch = null;
               String failure = null;
               try {
-                batch = request.uploads.copy(app, uris);
+                batch = request.uploads.copy(app, uris, request.copyControl);
               } catch (Exception error) {
                 failure = error.getMessage();
               }
@@ -1116,6 +1121,7 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
       session = null;
     } else closeSession();
     super.onDestroy();
+    if (closeOriginRestorePreview != null) closeOriginRestorePreview.run();
   }
 
   @Override

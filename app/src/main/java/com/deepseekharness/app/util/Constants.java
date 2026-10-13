@@ -18,7 +18,7 @@ public final class Constants {
   public static final String SITE_URL = "https://" + SITE_HOST + "/";
 
   // ================= 端口契约（框架不变式，见 AGENTS.md） =================
-  /** WebUI 默认端口 */
+  /** 历史手动端口缺省值；自动模式由本轮 Web 监听分配实际端口。 */
   public static final int DSH_WEB_PORT = 3080;
 
   /** App 能力桥（agent 调 Android）端口 */
@@ -49,6 +49,7 @@ public final class Constants {
   // ================= SharedPreferences 键（历史键名保持兼容，见 AGENTS.md） =================
   public static final String KEY_API_KEY = "api_key";
   public static final String KEY_PORT = "port";
+  public static final String KEY_WEB_PORT_MODE = "web_port_mode";
   public static final String KEY_MODEL = "model";
   public static final String KEY_WORKDIR = "workdir";
   public static final String KEY_PERMISSION_MODE = "permission_mode";

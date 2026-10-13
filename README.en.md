@@ -22,6 +22,8 @@
 > 🤖 If you are an AI agent or a new contributor, read **[AGENTS.md](AGENTS.md)** first
 > (structure, startup contracts, traps we already fell into). Don't scan the whole repo.
 
+> Local integration build171 uses `dsha-0.2.0-rc2.1[low].apk`. It has not been uploaded or accepted on devices; see the [local report](docs/releases/v0.2.22-build171-20261013.md). The published download links below still identify build170.
+
 ## ❤️ Sponsor
 
 <table>
@@ -286,7 +288,7 @@ Listed honestly, so you don't discover them after installing:
 │ proot (default) / proroot (optional, device-specific)│
 ├─────────────────────────────────────────────────────┤
 │ Ubuntu 24.04 arm64 · Node.js 24 · pnpm 10           │
-│  └ @deepseek-ai/dsh  →  Web UI :3080                │
+│  └ @deepseek-ai/dsh  →  Web UI :auto                │
 └─────────────────────────────────────────────────────┘
 ```
 

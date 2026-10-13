@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/bin/python3 /usr/local/share/dsha/pc-migration/dsha-portable.py "$@"

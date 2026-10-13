@@ -116,8 +116,10 @@
     <string name="ui2_config_sub">Save your changes. Port and runtime changes apply on the next start.</string>
     <string name="ui2_models_full">Providers · Credentials · Endpoint · Protocol · Models</string>
     <string name="ui2_network_runtime">Runtime and network</string>
-    <string name="ui2_port_preferred">Preferred Web port</string>
-    <string name="ui2_port_hint">If occupied, keep the preferred port and use an available one.</string>
+    <string name="ui2_port_auto">Assign the Web port automatically</string>
+    <string name="ui2_restore_port_drafts">Restore previous-port drafts</string>
+    <string name="ui2_port_preferred">Manual Web port</string>
+    <string name="ui2_port_hint">Automatic mode uses a system-assigned port, then reuses it while available. A conflict chooses another port. Turn this off to specify a port.</string>
     <string name="ui2_dns">DNS policy</string>
     <string name="ui2_display">Display and startup</string>
     <string name="ui2_floating">Floating status</string>

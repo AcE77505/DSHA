@@ -136,6 +136,87 @@ final class IsolatedInstallProcess extends Process implements AutoCloseable {
     }
   }
 
+  void requireCurrentBirth() throws IOException {
+    ProcessIdentity current = readIdentity(identity.pid);
+    if (!identity.sameProcess(current) || !current.ownsSession())
+      throw new IOException("OWNED_SESSION_BIRTH_CHANGED");
+    try {
+      if (Os.stat("/proc/" + identity.pid).st_uid != android.os.Process.myUid())
+        throw new IOException("OWNED_SESSION_UID_CHANGED");
+    } catch (android.system.ErrnoException unreadable) {
+      throw new IOException("OWNED_SESSION_UID_UNAVAILABLE", unreadable);
+    }
+    if (!identity.sameProcess(readIdentity(identity.pid)))
+      throw new IOException("OWNED_SESSION_BIRTH_CHANGED");
+  }
+
+  synchronized boolean confirmedClosed() {
+    return closed;
+  }
+
+  /** 超时回收前的只读会话快照；不读取 cmdline/env/栈，也不取得特权。 */
+  java.util.Map<String, Object> diagnosticSnapshot() {
+    var result = new java.util.LinkedHashMap<String, Object>();
+    result.put("schema", 1L);
+    result.put("leader", identity.pid);
+    result.put("started", identity.started);
+    result.put("session", identity.session);
+    var members = new java.util.ArrayList<java.util.Map<String, Object>>();
+    result.put("members", members);
+    try {
+      requireCurrentBirth();
+      File[] processes = new File("/proc").listFiles();
+      if (processes == null) throw new IOException("PROC_LIST_UNAVAILABLE");
+      java.util.Arrays.sort(processes, java.util.Comparator.comparing(File::getName));
+      for (File file : processes) {
+        if (!file.getName().matches("[1-9][0-9]{0,9}")) continue;
+        int pid;
+        try {
+          pid = Integer.parseInt(file.getName());
+        } catch (NumberFormatException ignored) {
+          continue;
+        }
+        if (NativeProcess.sessionId(pid) != identity.session) continue;
+        if (members.size() >= 64) {
+          result.put("truncated", true);
+          break;
+        }
+        var entry = new java.util.LinkedHashMap<String, Object>();
+        entry.put("pid", pid);
+        members.add(entry);
+        try {
+          if (Os.stat(file.getPath()).st_uid != android.os.Process.myUid()) {
+            entry.put("state", "UID_UNCONFIRMED");
+            continue;
+          }
+          var fs = new com.deepseekharness.app.backup.AndroidBackupFileSystem();
+          String status =
+              new String(
+                  fs.small(new File(file, "status"), 8192),
+                  java.nio.charset.StandardCharsets.US_ASCII);
+          for (String line : status.split("\n")) {
+            if (line.startsWith("State:") || line.startsWith("TracerPid:"))
+              entry.put(
+                  line.substring(0, line.indexOf(':')),
+                  line.substring(line.indexOf(':') + 1).trim());
+          }
+          String wait =
+              new String(
+                      fs.small(new File(file, "wchan"), 256),
+                      java.nio.charset.StandardCharsets.US_ASCII)
+                  .trim();
+          entry.put("wchan", wait.matches("[a-zA-Z0-9_]+") ? wait : "UNAVAILABLE");
+        } catch (IOException | android.system.ErrnoException unavailable) {
+          entry.put("state", com.deepseekharness.app.backup.BackupErrorCode.from(unavailable));
+        }
+      }
+      requireCurrentBirth();
+    } catch (IOException | RuntimeException | LinkageError unknown) {
+      result.put("identity", "UNCONFIRMED");
+    }
+    return result;
+  }
+
   private synchronized Integer poll() {
     if (closing
         && !closed
@@ -243,6 +324,11 @@ final class IsolatedInstallProcess extends Process implements AutoCloseable {
       }
       throw new IllegalStateException(
           com.deepseekharness.app.util.UiText.text("安装进程组身份不可确认，已停止后续维护"));
+    }
+    try {
+      requireCurrentBirth();
+    } catch (IOException unknown) {
+      throw new IllegalStateException("OWNED_SESSION_IDENTITY_UNCONFIRMED", unknown);
     }
     try {
       Os.kill(-identity.pid, OsConstants.SIGKILL);

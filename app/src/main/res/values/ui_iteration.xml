@@ -116,8 +116,10 @@
     <string name="ui2_config_sub">修改后保存。端口与运行方式在下次启动生效。</string>
     <string name="ui2_models_full">服务商 · API Key · 地址 · 协议 · 模型目录</string>
     <string name="ui2_network_runtime">运行与网络</string>
-    <string name="ui2_port_preferred">首选 Web 端口</string>
-    <string name="ui2_port_hint">端口占用时保留首选设置，自动使用可用端口。</string>
+    <string name="ui2_port_auto">自动分配 Web 端口</string>
+    <string name="ui2_restore_port_drafts">恢复旧端口草稿</string>
+    <string name="ui2_port_preferred">手动 Web 端口</string>
+    <string name="ui2_port_hint">自动模式首次由系统分配，随后复用可用端口；占用时重新分配。关闭自动模式可指定端口。</string>
     <string name="ui2_dns">DNS 解析策略</string>
     <string name="ui2_display">显示与启动</string>
     <string name="ui2_floating">悬浮条</string>

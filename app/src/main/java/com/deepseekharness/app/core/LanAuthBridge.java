@@ -70,7 +70,7 @@ final class LanAuthBridge {
           public void bind(Snapshot snapshot, String cookie) {
             synchronized (state.lifecycle) {
               if (!current(snapshot)) return;
-              if (LanProxyService.setDshAuthCookie(cookie, snapshot.generation())
+              if (LanProxyService.setDshAuthCookie(cookie, snapshot.generation(), snapshot.port())
                   && config.isLanMode())
                 LanProxyService.start(
                     runtime.getRootfsDir().getAbsolutePath(),
