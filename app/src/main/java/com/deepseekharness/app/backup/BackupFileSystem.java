@@ -52,6 +52,31 @@ public interface BackupFileSystem {
 
   OutputStream create(File file) throws IOException;
 
+  final class CreatedFile {
+    public final OutputStream stream;
+    public final Node identity;
+
+    public CreatedFile(OutputStream stream, Node identity) {
+      this.stream = stream;
+      this.identity = identity;
+    }
+  }
+
+  /** Production captures this identity from the opened descriptor, before exposing the stream. */
+  default CreatedFile createOwned(File file) throws IOException {
+    OutputStream stream = create(file);
+    try {
+      return new CreatedFile(stream, stat(file));
+    } catch (IOException failure) {
+      try {
+        stream.close();
+      } catch (IOException closing) {
+        failure.addSuppressed(closing);
+      }
+      throw failure;
+    }
+  }
+
   void directory(File file) throws IOException;
 
   void move(File source, File target) throws IOException;

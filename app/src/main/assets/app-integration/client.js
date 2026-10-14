@@ -574,7 +574,59 @@ window.__ModuleLoader__.load({id:'dsh-app-integration', factory: () => {
       window.removeEventListener('pageshow', resumed);
     };
   }
+  // 原生回会话仅调用真实 Host；确认实际 mainView 后回执，不能靠 URL/标签冒充打开。
+  function installNativeRoute(ctx) {
+    let pending, timer, attempted = false;
+    const cancel = () => { clearTimeout(timer); pending = undefined; attempted = false; };
+    const live = value => value.nonce === document.documentElement.getAttribute('data-dsha-native-nonce');
+    const current = () => Object.values(ctx.sessions.list.getSnapshot().byId || {})
+      .find(row => (row.retainedBy?.mainView ?? 0) > 0)?.id;
+    const finish = status => {
+      if (!pending) return;
+      const value = pending; cancel();
+      if (!live(value)) return;
+      if (status === 'opened') document.dispatchEvent(new CustomEvent('dsha-session-open', {detail:{id:value.sessionId}}));
+      document.dispatchEvent(new CustomEvent('dsha-native-session-result', {detail:JSON.stringify({
+        nonce:value.nonce,requestToken:value.requestToken,sessionId:value.sessionId,status})}));
+    };
+    const check = () => {
+      if (!pending) return;
+      const value = pending;
+      if (!live(value)) { cancel(); return; }
+      const snapshot = ctx.sessions.list.getSnapshot(), workspaces = ctx.workspaces.list.getSnapshot();
+      if (snapshot.phase !== 'ready' || workspaces.phase !== 'ready') return;
+      const row = snapshot.byId?.[value.sessionId];
+      // byId also contains retained subagent fallbacks; only ids proves Host membership.
+      if (!row || !snapshot.ids?.includes(value.sessionId)
+          || !Array.isArray(workspaces.archivedSessionIds)
+          || workspaces.archivedSessionIds.includes(value.sessionId)) { finish('not-found'); return; }
+      if (current() === value.sessionId) { finish('opened'); return; }
+      if (attempted) return; attempted = true;
+      try { Promise.resolve(ctx.uiWorkspace.openSession(value.sessionId)).then(
+        () => { if (pending === value) check(); }, () => { if (pending === value) finish('unavailable'); }); }
+      catch (_) { if (pending === value) finish('unavailable'); }
+    };
+    const open = event => {
+      if (typeof event.detail !== 'string' || event.detail.length > 2048) return;
+      let value; try { value = JSON.parse(event.detail); } catch (_) { return; }
+      if (value.nonce !== document.documentElement.getAttribute('data-dsha-native-nonce')
+          || !/^[a-f0-9]{32}$/.test(value.nonce) || typeof value.requestToken !== 'string'
+          || !/^[a-f0-9-]{36}$/.test(value.requestToken) || typeof value.sessionId !== 'string'
+          || !value.sessionId || value.sessionId.length > 512) return;
+      clearTimeout(timer); pending = value; attempted = false;
+      timer = setTimeout(() => { if (pending === value) finish('unavailable'); },7000);
+      check();
+    };
+    document.addEventListener('dsha-native-open-session',open);
+    document.addEventListener('dsha-native-route-cancel',cancel);
+    const off = ctx.sessions.list.subscribe(check), offWorkspaces = ctx.workspaces.list.subscribe(check);
+    document.dispatchEvent(new CustomEvent('dsha-native-route-ready'));
+    return () => { cancel(); off?.(); offWorkspaces?.();
+      document.removeEventListener('dsha-native-route-cancel',cancel);
+      document.removeEventListener('dsha-native-open-session',open); };
+  }
   function apply(ctx) {
+    ctx.effect(() => installNativeRoute(ctx), 'dsha-native-session-route');
     ctx.inject(['connection'], scoped => scoped.effect(() => installStreamResume(scoped), 'dsha-browser-stream-resume'));
     ctx.effect(() => {
       // Gecko 132+ 默认只缩小 visual viewport；dsh 的整屏布局需要随键盘一起重新排版。
@@ -626,5 +678,5 @@ window.__ModuleLoader__.load({id:'dsh-app-integration', factory: () => {
         db?.close(); stopReading(); stopDraftDeletion(); document.removeEventListener('dsha-close-details',closeDetails); };
     },'dsha-browser-state');
   }
-  return {inject:['conversation','sessions','layout','sidebarRight','uiWorkspace'],apply,watchDraft,usable,knownDraft,writeDraft,lease,protectedDrafts,recoveryCandidates,recoverDraftLeases,draftFailure,installDraftDeletionProof,residentInputs,createSessionIndex,installReadingPosition,installStreamResume};
+  return {inject:['conversation','sessions','workspaces','layout','sidebarRight','uiWorkspace'],apply,watchDraft,usable,knownDraft,writeDraft,lease,protectedDrafts,recoveryCandidates,recoverDraftLeases,draftFailure,installDraftDeletionProof,residentInputs,createSessionIndex,installReadingPosition,installStreamResume};
 }});

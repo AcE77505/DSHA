@@ -78,7 +78,7 @@ final class WebProcessSession {
       if (process == null || !Compat.isAlive(process)) {
         if (run.launcher == process) run.launcher = null;
         prune(run);
-      } else if (Compat.requestGracefulStop(process, 4_000)) {
+      } else if (stopOwnedLauncher(process, 4_000)) {
         if (run.launcher == process) run.launcher = null;
         prune(run);
       } else pending = true;
@@ -88,6 +88,14 @@ final class WebProcessSession {
             com.deepseekharness.app.util.WebStopDiagnostic.of(
                 com.deepseekharness.app.util.WebStopDiagnostic.Code.OWNED_LAUNCHER_PENDING))
         : java.util.List.of();
+  }
+
+  private static boolean stopOwnedLauncher(Process process, long timeoutMs) {
+    if (process instanceof com.deepseekharness.app.runtime.OwnedGuestProof owned)
+      return owned.stopAndConfirm(timeoutMs)
+          && owned.confirmedTreeExit()
+          && !Compat.isAlive(process);
+    return Compat.requestGracefulStop(process, timeoutMs);
   }
 
   String stopOwnedLaunchers() {

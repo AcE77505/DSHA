@@ -23,7 +23,7 @@ public final class WebFullscreenUi {
     activity.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN);
     WindowCompat.setDecorFitsSystemWindows(activity.getWindow(), false);
     View content = activity.findViewById(android.R.id.content);
-    content.setBackgroundColor(activity.getColor(R.color.surface));
+    activity.getWindow().setStatusBarColor(android.graphics.Color.TRANSPARENT);
     ViewCompat.setOnApplyWindowInsetsListener(
         content,
         (view, insets) -> {
@@ -53,13 +53,39 @@ public final class WebFullscreenUi {
     if (PictureInPictureActivity.showing(activity)) return;
     WindowInsetsControllerCompat controller =
         WindowCompat.getInsetsController(activity.getWindow(), activity.getWindow().getDecorView());
+    int color =
+        activity instanceof PictureInPictureActivity host
+            ? host.browserThemeColor()
+            : activity.getColor(R.color.surface);
+    View content = activity.findViewById(android.R.id.content);
+    if (content != null) {
+      int left = content.getPaddingLeft(), top = content.getPaddingTop();
+      int right = content.getPaddingRight(), bottom = content.getPaddingBottom();
+      content.setBackgroundColor(color);
+      content.setPadding(left, top, right, bottom);
+    }
     controller.setAppearanceLightStatusBars(
-        androidx.core.graphics.ColorUtils.calculateLuminance(activity.getColor(R.color.surface))
-            > 0.5);
+        androidx.core.graphics.ColorUtils.calculateLuminance(color) > 0.5);
+    controller.setAppearanceLightNavigationBars(
+        androidx.core.graphics.ColorUtils.calculateLuminance(color) > 0.5);
+    activity.getWindow().setStatusBarColor(android.graphics.Color.TRANSPARENT);
+    activity
+        .getWindow()
+        .setNavigationBarColor(
+            android.os.Build.VERSION.SDK_INT >= 26
+                ? color
+                : activity.getColor(R.color.terminal_surface));
     controller.setSystemBarsBehavior(
         WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
     // 显示状态栏，正文由 insets 避让；底部仍可通过手势唤出系统导航。
     controller.show(WindowInsetsCompat.Type.statusBars());
     controller.hide(WindowInsetsCompat.Type.navigationBars());
+  }
+
+  /** 当前实例核验后的主题色只改变绘制背景和图标，不重新加载页面。 */
+  public static void applyThemeColor(Activity activity, int color) {
+    if (activity == null || activity.isFinishing() || activity.isDestroyed()) return;
+    if (activity instanceof PictureInPictureActivity host) host.applyBrowserTheme(color);
+    applySystemBars(activity);
   }
 }

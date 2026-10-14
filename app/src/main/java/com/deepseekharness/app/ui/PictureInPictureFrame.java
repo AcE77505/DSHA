@@ -63,6 +63,8 @@ final class PictureInPictureFrame extends FrameLayout {
   void resumeViewport() {
     if (!compact) {
       frozen = false;
+      clearChildTransform();
+      resetGeometryCache();
       requestLayout();
     }
   }

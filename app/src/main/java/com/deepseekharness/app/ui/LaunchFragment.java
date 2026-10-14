@@ -41,6 +41,14 @@ public class LaunchFragment extends Fragment {
 
   private long enterRequest;
 
+  /** 进入失败必须保持可见；旧运行实例的失败不能覆盖新服务的状态。 */
+  private String webEntryFailure = "";
+
+  private long webEntryFailureGeneration = -1;
+  private String webEntryFailureUrl = "";
+
+  private androidx.appcompat.app.AlertDialog startRefusal;
+
   /** 本次启动开始时刻（显示耗时用）。 */
   private long startAtMs;
 
@@ -188,9 +196,13 @@ public class LaunchFragment extends Fragment {
 
   private void doStart(Activity activity, TextView status, Button start, boolean safeMode) {
     if (!safeMode && (controller.isStarting() || controller.isStopping())) return;
+    if (startRefusal != null && startRefusal.isShowing()) return;
     final View root = getView();
     if (root == null || activity.isFinishing() || activity.isDestroyed()) return;
     invalidateWebEntry();
+    final long request = enterRequest;
+    java.util.concurrent.atomic.AtomicReference<String> lastStatus =
+        new java.util.concurrent.atomic.AtomicReference<>("");
     startAtMs = System.currentTimeMillis();
     String time =
         new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
@@ -200,10 +212,15 @@ public class LaunchFragment extends Fragment {
     webReady = false;
     java.util.function.Consumer<String> startStatus =
         msg -> {
+          lastStatus.set(msg == null ? "" : msg);
           long generation = controller.getWebGeneration();
           activity.runOnUiThread(
               () -> {
-                if (getView() != root || generation != controller.getWebGeneration()) return;
+                if (request != enterRequest
+                    || getView() != root
+                    || activity.isFinishing()
+                    || activity.isDestroyed()
+                    || generation != controller.getWebGeneration()) return;
                 status.setText(com.deepseekharness.app.util.UiStateText.render(msg));
                 refreshRunState();
                 refreshLanAddr();
@@ -215,7 +232,10 @@ public class LaunchFragment extends Fragment {
       accepted = true;
     } else accepted = controller.startWeb(startStatus);
     refreshRunState();
-    if (!accepted) return;
+    if (!accepted) {
+      showStartRefusal(activity, root, request, lastStatus.get());
+      return;
+    }
     // 前台保活服务：dsh 后台常驻 + 看门狗自动重启（退到桌面/锁屏不被杀）
     try {
       Intent svc =
@@ -230,6 +250,44 @@ public class LaunchFragment extends Fragment {
       android.util.Log.w(
           "DSHA", com.deepseekharness.app.util.UiText.format("拉起保活服务失败: %s", t.getMessage()));
     }
+  }
+
+  private void showStartRefusal(Activity activity, View root, long request, String reason) {
+    if (request != enterRequest
+        || getView() != root
+        || !isResumed()
+        || activity.isFinishing()
+        || activity.isDestroyed()) return;
+    final long generation = controller.getWebGeneration();
+    String message =
+        reason == null || reason.isEmpty()
+            ? com.deepseekharness.app.util.UiText.choose(
+                "启动请求未执行，请查看恢复选项。", "Startup did not begin. See recovery options.")
+            : com.deepseekharness.app.util.UiStateText.render(reason);
+    androidx.appcompat.app.AlertDialog dialog =
+        new DshaDialogBuilder(activity)
+            .setTitle(
+                com.deepseekharness.app.util.UiText.choose("暂时无法启动", "Unable to start right now"))
+            .setMessage(message)
+            .setNegativeButton(com.deepseekharness.app.util.UiText.text("关闭"), null)
+            .setPositiveButton(
+                com.deepseekharness.app.util.UiText.choose("查看恢复选项", "See recovery options"),
+                (ignored, which) -> {
+                  if (request != enterRequest
+                      || getView() != root
+                      || !isResumed()
+                      || activity.isFinishing()
+                      || activity.isDestroyed()
+                      || generation != controller.getWebGeneration()) return;
+                  showRecovery();
+                })
+            .create();
+    startRefusal = dialog;
+    dialog.setOnDismissListener(
+        ignored -> {
+          if (startRefusal == dialog) startRefusal = null;
+        });
+    dialog.show();
   }
 
   /**
@@ -254,12 +312,10 @@ public class LaunchFragment extends Fragment {
         || activity.isDestroyed()) return;
     String url = webEntryUrl();
     if (url.isEmpty()) {
-      if (getView() != null) {
-        ((TextView) getView().findViewById(R.id.launch_status))
-            .setText(com.deepseekharness.app.util.UiText.text("先点「启动」，等鉴权链接就绪后再进入"));
-      }
+      finishWebEntry(root, com.deepseekharness.app.util.UiText.text("先点「启动」，等鉴权链接就绪后再进入"));
       return;
     }
+    clearWebEntryFailure();
     final long generation = webEntryGeneration();
     final long request = ++enterRequest;
     enteringWeb = true;
@@ -335,15 +391,31 @@ public class LaunchFragment extends Fragment {
   }
 
   private void finishWebEntry(View root, String message) {
+    if (getView() != root) return;
     enteringWeb = false;
-    ((TextView) root.findViewById(R.id.launch_status))
-        .setText(com.deepseekharness.app.util.UiStateText.render(message));
+    webEntryFailure = message == null ? "" : message;
+    webEntryFailureGeneration = webEntryGeneration();
+    webEntryFailureUrl = webEntryUrl();
+    TextView status = root.findViewById(R.id.launch_status);
+    status.setText(com.deepseekharness.app.util.UiStateText.render(webEntryFailure));
+    status.setVisibility(webEntryFailure.isEmpty() ? View.GONE : View.VISIBLE);
     refreshRunState();
   }
 
   private void invalidateWebEntry() {
     enterRequest++;
     enteringWeb = false;
+    clearWebEntryFailure();
+    if (startRefusal != null) {
+      startRefusal.dismiss();
+      startRefusal = null;
+    }
+  }
+
+  private void clearWebEntryFailure() {
+    webEntryFailure = "";
+    webEntryFailureGeneration = -1;
+    webEntryFailureUrl = "";
   }
 
   /** 仅在用户仍位于底部时跟随；滚动日志本身，不请求焦点或移动操作区。 */
@@ -402,10 +474,15 @@ public class LaunchFragment extends Fragment {
               && !starting
               && (stopResult != null && !stopResult.stopped()
                   || !controller.lastStopError().isEmpty());
-      boolean ready = !starting && !stopping && !webEntryUrl().isEmpty();
+      String localUrl = webEntryUrl();
+      boolean expiredEntryFailure =
+          !webEntryFailure.isEmpty()
+              && (webEntryFailureGeneration != webEntryGeneration()
+                  || !webEntryFailureUrl.equals(localUrl));
+      if (expiredEntryFailure) clearWebEntryFailure();
+      boolean ready = !starting && !stopping && !localUrl.isEmpty();
       com.deepseekharness.app.util.StartupTrace.Snapshot trace =
           controller.startupDiagnostics().snapshot();
-      String localUrl = webEntryUrl();
       if (launchLog != null && (trace.revision != logRevision || !localUrl.equals(logUrl))) {
         // 仅原生本机视图显示当前鉴权地址；归档与导出的诊断仍统一脱敏。
         updateLog(
@@ -445,13 +522,18 @@ public class LaunchFragment extends Fragment {
               ready
                   ? (controller.isWebCompatibilityFallback()
                           ? "proot"
-                          : controller.proot().runtime().id())
+                          : controller.proot().actualRuntimeMode())
                       + " · dsh "
                       + com.deepseekharness.app.util.Constants.DSH_VERSION
                   : getString(R.string.ui2_launch_hint));
       root.findViewById(R.id.launch_status)
           .setVisibility(
-              starting || stopping || unresolvedStop || !trace.issues.isEmpty()
+              enteringWeb
+                      || !webEntryFailure.isEmpty()
+                      || starting
+                      || stopping
+                      || unresolvedStop
+                      || !trace.issues.isEmpty()
                   ? View.VISIBLE
                   : View.GONE);
       if (starting)
@@ -465,6 +547,12 @@ public class LaunchFragment extends Fragment {
                     trace.issues.isEmpty()
                         ? com.deepseekharness.app.util.UiText.text("下方实时显示启动输出；等待不会自动终止。")
                         : com.deepseekharness.app.util.UiText.text("检测到插件或配置异常，可查看恢复选项。")));
+      else if (!webEntryFailure.isEmpty())
+        ((TextView) root.findViewById(R.id.launch_status))
+            .setText(com.deepseekharness.app.util.UiStateText.render(webEntryFailure));
+      else if (expiredEntryFailure)
+        ((TextView) root.findViewById(R.id.launch_status))
+            .setText(com.deepseekharness.app.util.UiStateText.render(trace.stage));
       root.findViewById(R.id.launch_busy)
           .setVisibility(starting || stopping ? View.VISIBLE : View.GONE);
       Button recovery = root.findViewById(R.id.launch_recovery);

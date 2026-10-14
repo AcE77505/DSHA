@@ -23,9 +23,9 @@ android {
         minSdk 30
         targetSdk 37
         buildConfigField 'String', 'BUNDLED_PNPM_VERSION', '"' + bundledTools.pnpm.version + '"'
-        versionCode 171
+        versionCode 173
         // DSHA 修订号 + 固定的北京时间戳 + 内置 DSH 版本；同一交付重建不变。
-        versionName "0.2.22-20261013.1248-dsh0.2.0-rc.2"
+        versionName "0.2.24-20261014.1308-dsh0.2.0-rc.2"
         testInstrumentationRunner project.findProperty('dsha.testRunner') ?: "com.deepseekharness.app.Rc13Instrumentation"
         ndk {
             abiFilters 'arm64-v8a'
@@ -90,8 +90,10 @@ android {
     packagingOptions {
         jniLibs {
             useLegacyPackaging = true
-            // 应急启动器按签名 APK 中的完整字节校验，禁止打包阶段再改写这两份 ELF。
-            keepDebugSymbols += ['**/libproot.so', '**/libprootloader.so']
+            // 运行时和应急启动器绑定签名 APK 中的完整字节，禁止打包阶段 strip 改写。
+            keepDebugSymbols += ['**/libproot.so', '**/libprootloader.so',
+                                 '**/libbxroot.so', '**/libbxroot-runtime.so', '**/libbxroot-ulx.so',
+                                 '**/libdsha-session.so', '**/libtermux.so']
             // 使用 app 自带的同版本 16 KB JNI，覆盖 terminal-emulator AAR 中的旧库。
             pickFirsts += ['**/libtermux.so']
             excludes += ['**/x86/**', '**/x86_64/**', '**/armeabi/**', '**/armeabi-v7a/**']
@@ -162,14 +164,33 @@ def verifyBuiltinRegistry = tasks.register('verifyBuiltinRegistry', Exec) {
     commandLine(System.getenv('DSHA_PYTHON') ?: 'python3', '-B',
             rootProject.file('tools/generate-builtin-plugins.py').absolutePath, '--verify')
 }
+def verifyBxrootNative = tasks.register('verifyBxrootNative', Exec) {
+    inputs.files(rootProject.files('tools/bxroot/lock.json', 'tools/bxroot/build.py',
+            'tools/prepare-bxroot-native-proof.py', 'tools/native_runtime_proof.py',
+            'tools/native-packaging.lock.json', 'tools/native-dependencies.lock.json',
+            'app/src/main/assets/bxroot-native-lock.json'))
+    inputs.files(fileTree(rootProject.file('tools/bxroot')) {
+        exclude 'build/**', 'archives/**', '__pycache__/**', '**/*.pyc'
+    })
+    inputs.files(fileTree('src/main/jniLibs'), fileTree('src/low/jniLibs'))
+    commandLine(System.getenv('DSHA_PYTHON') ?: 'python3', '-B',
+            rootProject.file('tools/bxroot/build.py').absolutePath, '--check')
+}
+def verifyBxrootProjection = tasks.register('verifyBxrootProjection', Exec) {
+    inputs.files(rootProject.files('tools/bxroot/lock.json', 'tools/prepare-bxroot-native-proof.py',
+            'tools/native_runtime_proof.py', 'tools/source_text.py', 'app/src/main/assets/bxroot-native-lock.json'))
+    inputs.files(fileTree('src/main/jniLibs'))
+    commandLine(System.getenv('DSHA_PYTHON') ?: 'python3', '-B',
+            rootProject.file('tools/prepare-bxroot-native-proof.py').absolutePath, '--check')
+}
 def verifyCredentialRegistry = tasks.register('verifyCredentialRegistry', Exec) {
     inputs.files(rootProject.files('tools/generate-credential-paths.py', 'app/src/main/assets/credential-paths.json',
             'app/src/main/java/com/deepseekharness/app/util/CredentialPathRules.java'))
     commandLine(System.getenv('DSHA_PYTHON') ?: 'python3', '-B',
             rootProject.file('tools/generate-credential-paths.py').absolutePath, '--check')
 }
-tasks.named('preBuild').configure { dependsOn(verifyBundledIdentities, verifyBuiltinRegistry, verifyCredentialRegistry) }
-tasks.withType(Test).configureEach {
+tasks.named('preBuild').configure { dependsOn(verifyBundledIdentities, verifyBuiltinRegistry, verifyCredentialRegistry, verifyBxrootNative, verifyBxrootProjection) }
+tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
     systemProperty 'dsha.assetsDir', file('src/main/assets').absolutePath
 }
 tasks.configureEach {
@@ -182,6 +203,7 @@ def prepareStandardAssets = tasks.register("prepareStandardAssets", Exec) {
     inputs.dir("src/main/assets")
     inputs.file(rootProject.file("tools/prepare-standard-assets.py"))
     inputs.file(rootProject.file("tools/generated_asset_directory.py"))
+    inputs.file(rootProject.file("tools/native_runtime_proof.py"))
     inputs.files(rootProject.files("tools/asset-deployment.json", "tools/asset_deployment.py", "tools/verify-asset-deployment.py"))
     inputs.file(rootProject.file("tools/prepare-web-compat.mjs"))
     inputs.files(rootProject.files("tools/web-compat/entry.cjs", "tools/web-compat/package.json", "tools/web-compat/package-lock.json"))
@@ -254,6 +276,7 @@ def prepareRecoveryAssets = tasks.register("prepareRecoveryAssets", Exec) {
     inputs.file(rootProject.file("tools/prepare-recovery-assets.py"))
     inputs.file(rootProject.file("tools/recovery_runtime_overlay.py"))
     inputs.file(rootProject.file("tools/generated_asset_directory.py"))
+    inputs.file(rootProject.file("tools/native_runtime_proof.py"))
     inputs.files(rootProject.files("tools/asset-deployment.json", "tools/asset_deployment.py"))
     inputs.file(rootProject.file("tools/recovery-runtime/lock.json"))
     // 正式归档变化必须重算物理位置；固定副本可以首次缺失后由同摘要种子建立。
@@ -360,4 +383,15 @@ dependencies {
     // 宿主凭据 YAML 仅使用 data-only SafeConstructor；来源、JAR 和许可由备份锁核验。
     implementation 'org.yaml:snakeyaml:2.4'
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.15.1'
+}
+
+// Host Provider fixtures use SDK 23/34. This configuration never changes APK dependencies.
+tasks.withType(Test).configureEach {
+    jvmArgs '--add-opens=java.base/java.io=ALL-UNNAMED'
+    def frameworkDirectory = System.getenv('DSHA_ROBOLECTRIC_DEPENDENCY_DIR')
+    if (frameworkDirectory) {
+        systemProperty 'robolectric.offline', 'true'
+        systemProperty 'robolectric.dependency.dir', frameworkDirectory
+    }
 }

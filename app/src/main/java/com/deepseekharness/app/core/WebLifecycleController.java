@@ -13,7 +13,6 @@ import com.deepseekharness.app.util.WebProcSel;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
@@ -39,12 +38,15 @@ final class WebLifecycleController {
     volatile Process launcher;
     volatile WebProcessSession.BridgeLease bridge;
     volatile String authUrl = "";
+    volatile String startupProfile;
     volatile int port;
-    volatile boolean compatible;
+    volatile boolean compatible, engineFailure;
     volatile boolean portRetried;
     volatile boolean forceDynamicPort;
     volatile int bindConflict = -1;
     volatile int requestedPort;
+    volatile com.deepseekharness.app.backup.HostWebLog log;
+    volatile com.deepseekharness.app.util.AgentTaskRegistration registration;
 
     WebRun(long generation) {
       this.generation = generation;
@@ -128,6 +130,15 @@ final class WebLifecycleController {
       WebRun run = state.currentRun;
       return readyWebPageIdentity(
           lifecycle, run, run != null && state.recovery.failed(run.generation));
+    }
+  }
+
+  public com.deepseekharness.app.util.AgentTaskRegistration.Snapshot getReadyTaskRegistration() {
+    synchronized (lifecycle) {
+      WebRun run = state.currentRun;
+      if (run == null || run.registration == null) return null;
+      return run.registration.ready(
+          readyWebPageIdentity(lifecycle, run, state.recovery.failed(run.generation)));
     }
   }
 
@@ -264,6 +275,8 @@ final class WebLifecycleController {
         if (generation < 0) return false;
         startedGeneration = generation;
         boolean priorCompatible = state.currentRun != null && state.currentRun.compatible;
+        if (state.currentRun != null && state.currentRun.registration != null)
+          state.currentRun.registration.revoke();
         WebRun run = new WebRun(generation);
         state.currentRun = run;
         webRuns.put(generation, run);
@@ -273,11 +286,7 @@ final class WebLifecycleController {
         state.diagnostics.begin(generation, safeMode);
         state.diagnostics.message(
             generation,
-            com.deepseekharness.app.util.UiText.format(
-                "运行方式：%s",
-                config.isProroot() && android.os.Build.VERSION.SDK_INT >= 26
-                    ? "proroot"
-                    : "proot"));
+            com.deepseekharness.app.util.UiText.format("运行方式：%s", config.getContainerRuntime()));
         new File(proot.getRootfsDir(), "root/.dsha-web-activity.json").delete();
         io.execute(
             () -> {
@@ -338,22 +347,21 @@ final class WebLifecycleController {
         return;
       }
       String startupProfile =
-          new StartupPipeline(config, boot, proot, webProc, state.diagnostics)
-              .prepare(
-                  generation,
-                  safeMode,
-                  new StartupEnvironmentActions(
-                      owner,
-                      state,
-                      processes,
+          run.startupProfile != null
+              ? run.startupProfile
+              : new StartupPipeline(config, boot, proot, webProc, state.diagnostics)
+                  .prepare(
                       generation,
-                      stage -> setWebStage(generation, stage),
-                      status -> reportStatus(generation, onStatus, status)));
+                      safeMode,
+                      new StartupEnvironmentActions(
+                          owner,
+                          state,
+                          processes,
+                          generation,
+                          stage -> setWebStage(generation, stage),
+                          status -> reportStatus(generation, onStatus, status)));
       if (startupProfile == null) return;
-      String runtimeName = boot.runtime().id();
-      state.diagnostics.message(
-          generation, com.deepseekharness.app.util.UiText.format("本次实际运行方式：%s", runtimeName));
-      run.compatible = compatible;
+      run.startupProfile = startupProfile;
       int preferred = run.portRetried ? run.requestedPort : config.getRequestedWebPort();
       run.requestedPort = preferred;
       com.deepseekharness.app.util.WebPortPolicy.Choice ports =
@@ -374,11 +382,36 @@ final class WebLifecycleController {
             com.deepseekharness.app.util.UiText.text("正在自动选择可用 Web 端口，首选端口设置保留"));
       }
       String launchKey = config.readApiKey().requireValue();
-      Map<String, String> launchEnvironment =
-          launchKey.isEmpty() ? Map.of() : Map.of("DEEPSEEK_API_KEY", launchKey);
+      Map<String, String> launchEnvironment = new java.util.HashMap<>();
+      if (!launchKey.isEmpty()) launchEnvironment.put("DEEPSEEK_API_KEY", launchKey);
+      synchronized (lifecycle) {
+        if (!lifecycle.isCurrent(generation)) return;
+        if (run.registration != null) run.registration.revoke();
+        run.registration =
+            new com.deepseekharness.app.util.AgentTaskRegistration(generation, run.instanceId);
+        launchEnvironment.putAll(run.registration.launchEnvironment());
+      }
+      try {
+        run.log =
+            com.deepseekharness.app.backup.HostWebLog.create(
+                new com.deepseekharness.app.backup.AndroidBackupFileSystem(),
+                ctx.getFilesDir().getCanonicalFile());
+      } catch (IOException unavailable) {
+        run.log = null;
+        state.diagnostics.message(
+            generation, "WEB_LOG_UNAVAILABLE:" + unavailable.getClass().getSimpleName());
+      }
       Process p =
           boot.execRootfs(
               runCoreCommand(startupProfile, ports.listen, generation), launchEnvironment);
+      String runtimeName = com.deepseekharness.app.runtime.OwnedGuestProof.modeOf(p);
+      proot.recordActualWebRuntime(p);
+      if ("UNKNOWN".equals(runtimeName)) throw new IOException("WEB_ENGINE_NOT_RECORDED");
+      state.diagnostics.message(
+          generation, com.deepseekharness.app.util.UiText.format("本次实际运行方式：%s", runtimeName));
+      run.compatible =
+          compatible
+              || "proot".equals(runtimeName) && "bxroot".equals(config.getContainerRuntime());
       run.launcher = p;
       setWebStage(generation, com.deepseekharness.app.util.UiText.text("等待鉴权链接"));
       // 3090 桥就绪：agent 在容器里调设备能力（/exec /confirm /status）走这条通道。
@@ -432,7 +465,7 @@ final class WebLifecycleController {
     }
   }
 
-  /** 读 dsh 进程输出：抓鉴权链接（宽松）、并把脱敏后的输出落到容器日志方便排查。 */
+  /** Read the guest stdout pipe and send redacted output to this launch's private host sink. */
   private void drainWebOutput(
       Process p,
       long generation,
@@ -443,6 +476,7 @@ final class WebLifecycleController {
       com.deepseekharness.app.util.WebPortPolicy.Choice ports) {
     WebRun run = webRuns.get(generation);
     if (run == null) return;
+    final com.deepseekharness.app.backup.HostWebLog outputLog = run.log;
     new WebOutputSession(ports.listen)
         .drain(
             p,
@@ -456,7 +490,9 @@ final class WebLifecycleController {
                   if (!current()) return;
                   int conflict = com.deepseekharness.app.util.WebPortPolicy.conflictPort(lines);
                   if (conflict > 0) run.bindConflict = conflict;
-                  appendHostLog(lines);
+                  appendHostLog(outputLog, lines);
+                  if (com.deepseekharness.app.util.RuntimeEnginePolicy.engineFailure(lines))
+                    run.engineFailure = true;
                   state.diagnostics.output(generation, lines);
                   if (state.diagnostics.hasExplicitStartupFailure(generation)) {
                     boolean pendingBindRetry =
@@ -530,9 +566,7 @@ final class WebLifecycleController {
                     state.diagnostics.message(
                         generation,
                         "WEB_BIND_RACE_EXIT: port=" + ports.listen + " exit=" + exitCode);
-                    state.diagnostics.preserveFailure(
-                        new File(proot.getRootfsDir(), "root/dsh-web.log"),
-                        "WEB_BIND_RACE_EXIT:" + exitCode);
+                    state.diagnostics.preserveFailure(outputLog, "WEB_BIND_RACE_EXIT:" + exitCode);
                     state.diagnostics.completed(
                         generation, "bind-conflict", "WEB_BIND_RACE_EXIT:" + exitCode);
                     io.execute(() -> retryAfterPortConflict(generation, onStatus, safeMode));
@@ -544,8 +578,7 @@ final class WebLifecycleController {
                           runtimeName,
                           exitCode);
                   state.diagnostics.message(generation, exitReason);
-                  state.diagnostics.preserveFailure(
-                      new File(proot.getRootfsDir(), "root/dsh-web.log"), exitReason);
+                  state.diagnostics.preserveFailure(outputLog, exitReason);
                   boolean namedFailure =
                       state.diagnostics.hasExplicitStartupFailure(generation)
                           || state.diagnostics.snapshot().issues.keySet().stream()
@@ -556,12 +589,18 @@ final class WebLifecycleController {
                       hadAuth,
                       namedFailure,
                       lifecycle.isCurrent(generation),
-                      exitCode)) {
+                      exitCode,
+                      p instanceof com.deepseekharness.app.runtime.OwnedGuestProof owned
+                          && owned.commandWasNeverExecuted(),
+                      p instanceof com.deepseekharness.app.runtime.OwnedGuestProof owned
+                          && owned.confirmedTreeExit(),
+                      !(p instanceof com.deepseekharness.app.runtime.OwnedGuestProof owned
+                          && owned.commandWasNeverExecuted()))) {
                     reportStatus(
                         generation,
                         onStatus,
                         com.deepseekharness.app.util.UiText.text(
-                            "proroot 已退出，正在自动使用 proot 兼容重试；本轮只重试一次。"));
+                            "bxroot 引擎故障且本轮进程树已关闭，正在使用 proot 兼容重试；本轮只重试一次。"));
                     io.execute(() -> retryWithProot(generation, onStatus, safeMode));
                     return;
                   }
@@ -688,7 +727,7 @@ final class WebLifecycleController {
     }
     com.deepseekharness.app.util.EnvironmentTaskGate.Lease lease =
         com.deepseekharness.app.util.EnvironmentTaskGate.tryAcquire(
-            com.deepseekharness.app.util.UiText.text("proroot 退出后的兼容重试"));
+            com.deepseekharness.app.util.UiText.text("bxroot 退出后的兼容重试"));
     if (lease == null) {
       lifecycle.finishStart(generation);
       reportStatus(
@@ -700,6 +739,8 @@ final class WebLifecycleController {
     try (lease) {
       lease.run(
           () -> {
+            if (!processes.confirmStopped())
+              throw new IOException("WEB_ENGINE_RETRY_EXIT_UNCONFIRMED");
             startWeb(generation, onStatus, safeMode, false, true);
             return null;
           });
@@ -717,15 +758,11 @@ final class WebLifecycleController {
     return run != null && run.compatible;
   }
 
-  /** 把 dsh 输出脱敏后落到容器内 /root/dsh-web.log（排查用，鉴权 token 不落盘）。 */
-  private void appendHostLog(String chunk) {
+  /** Guest stdout is redacted into this exact launch's private host sink. */
+  private void appendHostLog(com.deepseekharness.app.backup.HostWebLog log, String chunk) {
+    if (log == null) return;
     try {
-      File log = new File(proot.getRootfsDir(), "root/dsh-web.log");
-      if (log.getParentFile() != null) log.getParentFile().mkdirs();
-      Compat.append(
-          log,
-          com.deepseekharness.app.util.SensitiveData.redact(redactAuthUrl(chunk))
-              .getBytes(StandardCharsets.UTF_8));
+      log.append(com.deepseekharness.app.util.SensitiveData.redact(redactAuthUrl(chunk)));
     } catch (Throwable ignored) {
     }
   }
@@ -821,7 +858,10 @@ final class WebLifecycleController {
       long generation = lifecycle.beginStop();
       state.lastStopError = "";
       WebRun run = webRuns.get(previous);
-      if (run != null) run.authUrl = "";
+      if (run != null) {
+        run.authUrl = "";
+        if (run.registration != null) run.registration.revoke();
+      }
       notifyReadyWebPageChanged();
       // 宿主直接写小标记，不等可能仍在解压/注册插件的串行任务。
       try {
@@ -1015,7 +1055,9 @@ final class WebLifecycleController {
       if (!lifecycle.isCurrent(generation) || !state.recovery.fail(generation, reason)) return;
       notifyReadyWebPageChanged();
       state.diagnostics.completed(generation, "failed", reason);
-      state.diagnostics.preserveFailure(new File(proot.getRootfsDir(), "root/dsh-web.log"), reason);
+      WebRun run = webRuns.get(generation);
+      if (run != null && run.registration != null) run.registration.revoke();
+      state.diagnostics.preserveFailure(run == null ? null : run.log, reason);
       if (!state.diagnostics.snapshot().safe)
         PluginActivationHooks.failed(owner, generation, state.diagnostics.recordId());
       if (!state.diagnostics.snapshot().browserReady || state.recovery.blocked())

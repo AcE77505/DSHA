@@ -69,6 +69,9 @@ def prepare(args):
         if patched!=original:physical.write_bytes(patched)
     for folder,name in [('runtime-fs','dsha-runtime-fs'),('session-compat','dsha-session-compat'),('client-combo-cache','dsha-client-combo-cache')]:
         shutil.copytree(io_path(ASSETS/folder),io_path(modules/name),dirs_exist_ok=True)
+    policy=io_path(modules/'dsha-destructive-policy'); policy.mkdir(exist_ok=True)
+    for name,file in builder.destructive_policy_files().items():
+        shutil.copyfile(file,policy/name)
     overlays={}
     builder_owned = {'deepseek-messages-compat-patch.json','lexical-claim-patch.json','conversation-materialized-patch.json','client-combo-patch.json'}
     registry=json.loads((ASSETS/'runtime-patches.json').read_text(encoding='utf8'))

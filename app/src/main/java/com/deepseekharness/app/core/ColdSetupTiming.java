@@ -25,6 +25,8 @@ public final class ColdSetupTiming {
           if (!parent.isDirectory() && !parent.mkdir()) throw new IOException("COLD_TIMING_ROOT");
           File owned = new File(parent, UUID.randomUUID().toString());
           if (!owned.mkdir()) throw new IOException("COLD_TIMING_OWNED_ROOT");
+          ColdProbeCleanup cleanup =
+              ColdProbeCleanup.capture(app.getFilesDir().getCanonicalFile(), owned);
           long started = android.os.SystemClock.elapsedRealtime();
           List<Map<String, Object>> stages = new ArrayList<>();
           Consumer<String> timedProgress =
@@ -91,13 +93,7 @@ public final class ColdSetupTiming {
             throw failure;
           } finally {
             if (completed) {
-              FactoryReset.eraseContents(
-                  new AndroidBackupFileSystem(),
-                  owned,
-                  new BackupControl(null),
-                  FactoryReset.STAGE_PRIVATE,
-                  new long[] {0, 0});
-              if (!owned.delete()) throw new IOException("COLD_TIMING_CLEANUP");
+              cleanup.clean(new BackupControl(null));
             }
             scoped.clearPreferences();
           }

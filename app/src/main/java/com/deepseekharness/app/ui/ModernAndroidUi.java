@@ -25,6 +25,7 @@ public final class ModernAndroidUi implements Application.ActivityLifecycleCallb
     if (content == null) return;
     if (android.os.Build.VERSION.SDK_INT >= 29) content.setForceDarkAllowed(false);
     WindowCompat.setDecorFitsSystemWindows(activity.getWindow(), false);
+    activity.getWindow().setStatusBarColor(android.graphics.Color.TRANSPARENT);
     int color = activity.getColor(R.color.surface);
     activity
         .getWindow()

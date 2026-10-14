@@ -209,17 +209,7 @@ public class WebProcessManager {
   WebProcessManager(ProotBootstrap proot, File records) throws IOException {
     this.proot = proot;
     this.records = records;
-    File home =
-        new File(proot.getRootfsDir().getParentFile().getParentFile(), "runtime-trials")
-            .getCanonicalFile();
-    if (!records.getCanonicalFile().equals(records.getAbsoluteFile())
-        || !records.getParentFile().getParentFile().equals(home)
-        || !records.getName().equals("payload")
-        || !records
-            .getParentFile()
-            .getName()
-            .matches(com.deepseekharness.app.util.Ids.UUID_PATTERN))
-      throw new IOException("TRIAL_RECORD_DIRECTORY");
+    TrialPaths.requirePayload(proot.context().getFilesDir(), records);
   }
 
   private File root() {
@@ -602,8 +592,7 @@ public class WebProcessManager {
     if (records == null)
       try {
         var fs = new com.deepseekharness.app.backup.AndroidBackupFileSystem();
-        File files = proot.getRootfsDir().getParentFile().getParentFile().getCanonicalFile();
-        File home = fs.child(files, "runtime-trials");
+        File home = TrialPaths.home(proot.context().getFilesDir());
         if (!fs.stat(home).type.equals("MISSING")) {
           java.util.List<String> entries = fs.list(home);
           if (entries.size() > com.deepseekharness.app.backup.BackupLimits.TRANSACTION_RECORDS)

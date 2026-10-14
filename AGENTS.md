@@ -1,5 +1,24 @@
 # AGENTS.md
 
+> 2026-10-15 本轮新增授权：仅同步当前应用源码、构建脚本、必要文档与 Star History 到 GitHub；不上传 APK、离线归档、设备取证、密钥或本机交付资料，不发布 Release 或网站。下方历史“未上传”描述对应各自当时的本地交付状态，本轮源码同步范围见 docs/source-updates/build173.md。
+
+> build173 PiP 补充交付（2026-10-15）：C17 标准包修复“小窗显示时停止 → 重启 → 再进入”残留 Task 0.275 缩放；失效空宿主退休，新代次使用新 Task，同代网页实例继续保留。62 项定向 Activity 宿主回归、76 项开机边界恢复关联测试及最终 37 项软件门禁通过；两版 JUnit 各1700项、40 skip，Release Lint/完整资产/历史签名通过。正式同签名 Android13 原应用覆盖后，真实重启恢复、受管更新、PiP 停止及导出停止后的新窗口5/30秒、同代恢复/返回/旋转均有实际记录。1269条数据无增删，个人配置、会话、附件字节保留；历史4条未知记录与1条追加消息缺口继续保留。有限日志有2次 renderer 报告和2次 SAF 系统捕获 NPE，实际导出成功，不作零崩溃结论。标准 APK SHA c11abc4197f747b690897ea2198c990514eedd5d6ca10b9111ce7da90ed02f57 / 288099627 bytes，已替换 release 同名 rc2.1 标准包；C14 原件及封存材料保留，Low172 原字节不动。回执 artifacts/deliveries/build173-standard-pip-fix.json，源码 artifacts/source/build173-pip-fix/，补充报告 docs/releases/v0.2.24-build173-pip-20261015.md；不发布 GitHub、网站或 Release。
+
+> build173 标准版本地交付：10 个 gpt-6.1-sol / xhigh 代理处理当前开放条目及真实覆盖升级故障，撤回 QuickChat。最终 C14 标准包 0.2.24-20261014.1308-dsh0.2.0-rc.2 / 173，E7E3 / 非调试 / com.dsh.client，288,084,856 bytes；已同签名覆盖 Android13 原应用，启动、画中画停止重启后全屏恢复、旋转及最终无密码导出有实际记录。145 个宿主入口、两版 JUnit（各1673项，39 skip）/ Release Lint / 完整资产签名门禁通过；四小时仅继承9项输入逐字节相同的 build172 桌面证据。旧1094条归档记录全在，明确变更已分类，4条新增和1条追加消息保留未归因缺口。只替换标准版 APK 与校验；Low 按用户要求暂缓设备验收、交付仍保留 build172 原字节。回执 artifacts/deliveries/build173-standard.json，源码 artifacts/source/build173/，范围与缺口 docs/releases/v0.2.24-build173-20261014.md；不发布 GitHub、网站或 Release。
+
+> build172 本地软件交付：10 个 gpt-6.1-sol / xhigh 代理完成 bxroot 迁移、全部 #1–150 处置、沉浸式系统栏、移动 UI 3.1.0、导出与外置文件保护。144个软件入口、两版完整 JUnit/Release Lint/完整资产与历史签名门禁、完整四小时 Chromium/Firefox 桌面持续回归通过；同名 rc2.1 APK已覆盖，build171原件保存在版本history。当前源码 0.2.23-20261014.0112-dsh0.2.0-rc.2 / 172；未做设备验收，不发布 GitHub、网站或 Release。最终回执 artifacts/deliveries/build172.json，源材料 artifacts/source/build172/，范围及剩余缺口 docs/releases/v0.2.23-build172-20261014.md。
+
+## 本轮用户决定（覆盖下方与历史文档中的旧实现规则）
+
+- 本轮新增修复只看仍开放的 issue / PR，已关闭条目不追做，插件收录跳过。QuickChat 已按用户要求撤回，不再恢复其生产入口。标准版优先，Low 不安装、不做设备验收，既有 Low172 交付文件和校验保持原字节；不能把软件双版通过写成设备双版通过。
+- 引擎只保留 bxroot / proot。首次升级优先 bxroot；升级后的显式 proot 选择保留。启动阶段明确引擎失败、无插件故障和用户业务提交，且本轮受管后代树与 launcher 都已确认退出，才允许一次自动 proot 重试。慢启动、超时、未知执行结果和已开始的写任务不能借此重放。proroot 只保留历史记录读取，不保留生产执行。
+- 彻底重装/完整格式化功能移除，包括生产入口、Intent 触发和擦除后端。外置工作区维护只能断开私有引用，不遍历清理、覆盖或改名其内容；旧恢复日志不能自动重放外置写删。冷测速等合法私有临时清理必须使用受控目标及 NOFOLLOW，不能继承完整格式化能力。
+- 原生外壳继续 Java17 / Material3 和现有导航，只迁移透明状态栏、背景跟色、图标明暗与 Insets。状态栏保持可见，键盘、挖孔和 PiP 的安全区规则保留；双网页内核使用同一个网页实例切换全屏 / PiP / 隐藏。恢复全屏时按系统当前 PiP 状态同步并幂等清除自有缩放与位移，不能依赖旧几何缓存宣称变换已清除。
+- 内置移动插件固定 3.1.0 / ab3a85bead1c53b723e8627f5b44e3c306d85604；DSH 仍 0.2.0-rc.2，Ubuntu base10 不变。上游已吸收的本地差异退休，安全服务端替换、快捷键搜索、可见区域 CSS 和视口合并仍须实际回归。
+- 屏幕确认策略为全部手动 / 按应用自定义 / 全部允许。全部允许覆盖敏感页面，仅免 DSHA 确认；系统能力、实际目标、运行代次、最新帧与节点身份仍校验。持久规则只在本机，停止使本轮许可失效，规则修改或撤销使排队请求失效，不从备份导入授权。
+- 不实现整合包/市场及插件收录。任务通知采用标准进度通知，不请求系统 promoted 胶囊；原生终端、插件安装及生命周期脚本继续开放，工具审批不能宣称强沙箱。
+- 当前源码版本码173，诊断版本冻结为 0.2.24-20261014.1308-dsh0.2.0-rc.2。本轮标准版交付文件为 dsha-0.2.0-rc2.1.apk；Low172 原交付文件保留。com.dsh.client / E7E3 / 非调试正式包不变。生成总资产及描述符、全量最终验证与交付由单一负责人在源码冻结后完成。
+
 > build171 本地整合版：执行 PR102–150 中20个开放 PR 的固定源码处置，并修复 issue121/122/148/149 的已证实路径。默认 Web 端口由内核动态分配并复用上次可用端口；ADB 配对/连接端口继续由 Android 提供。保留最新帧输入门、未知执行结果不重放和退出屏障。文件名为 dsha-0.2.0-rc2.1[low].apk，包名及 E7E3 历史签名不变。本轮按用户要求仅软件验证与本地打包，不操作设备或发布 GitHub。最终摘要、检查及未验范围见 docs/releases/v0.2.22-build171-20261013.md。
 
 > build170 上一已发布正式包：报告的 ADB 路径/摘要与导入回退、附件直接 SAF、草稿心跳/旧引用恢复已打包。真机发现冷 Python 多级父目录未建立造成 PARENT_LINK_OR_MISSING，已允许安全缺失后缀交原 NOFOLLOW 发布器创建；现有链接仍拒绝。两版各45项关联检查与 Lint 通过，Android13 原生补齐/校验安装15个wheel并SETUP_DONE，WebView/Gecko附件和草稿行为、最终两APK覆盖启动通过。手机最终Standard170/READY，APK已按后续授权正式发布 GitHub v0.2.0-rc2 / Latest，完整无线配对及原vivo16未复验，详见 docs/releases/v0.2.21-build170-20261009.md。
@@ -8,7 +27,7 @@ DSHA 重构骨架。本文让你不扫全库就能上手 —— 读它之前先�
 
 ## 一句话
 
-APK 用 proot/proroot 把完整 Ubuntu rootfs 搬进 app 私有目录，在里面跑 Node 24 +
+APK 用 bxroot/proot 把完整 Ubuntu rootfs 搬进 app 私有目录，在里面跑 Node 24 +
 pnpm + `@deepseek-ai/dsh`（**0.2.0-rc.2**）的 Web UI（默认动态端口，手动模式可指定 `3080`）。原生层是纯 Java 17、
 Material3、单 Gradle 模块 `:app`。
 
@@ -18,13 +37,13 @@ Material3、单 Gradle 模块 `:app`。
 
 - **网页文件与虚拟屏（build164）**：WebView 的 `window.DSHA.shareFile/saveFile` 接收网页已有的 File/Blob，通过精确同源、顶层帧、当前运行实例的 WebMessageListener 转为受限流式传输，不接收本机路径。分享缓存的实际文件名与显示名一致，FileProvider仅临时授权读取；返回chooser-opened只代表选择器打开。下载绑定原download文件名并反馈保存/取消/失败。原生分享在Android13通过，Android SAF最终落盘及原Android16报告设备未复测。`VirtualScreenCore --launch` 在握手/清理完成后显式System.exit(0)，避免ROM非守护线程阻止父进程结束；不能因此放宽通道鉴权或成功退出判定。
 
-- **当前本地源码版本为 0.2.22-20261013.1248-dsh0.2.0-rc.2 / 171**：本轮网页附件选择修复范围见 `docs/releases/v0.2.18-build167-20261008.md`，移动UI同步继承166，文件分享与虚拟屏修复继承164，shell临时目录修复继承163，issue95/97/98与PR94继承161、说明继承162；完整冷安装继承160，236项历史处置见build156报告，本轮验收以实际新包记录为准。继承153的PARENT_LINK与重建回切修复；用户导出真实无密码tar.gz，保留历史加密原件读取。APK文件名为dsha-0.2.0-rc2.1[low].apk，升级受管DSH运行时并保留历史数据读取兼容；链接、本地包与更新解析后自动提交并启用。插件维护与终端按用户要求开放未锁定依赖安装、生命周期脚本和修复shell。上游已将Agent预设会话头标签设为只读，并接管模型设置入口；不要把rc1的自定义标签/模型导航补丁重新套回新版本。
+- **build171 历史本地源码版本为 0.2.22-20261013.1248-dsh0.2.0-rc.2 / 171**：本轮网页附件选择修复范围见 `docs/releases/v0.2.18-build167-20261008.md`，移动UI同步继承166，文件分享与虚拟屏修复继承164，shell临时目录修复继承163，issue95/97/98与PR94继承161、说明继承162；完整冷安装继承160，236项历史处置见build156报告，本轮验收以实际新包记录为准。继承153的PARENT_LINK与重建回切修复；用户导出真实无密码tar.gz，保留历史加密原件读取。APK文件名为dsha-0.2.0-rc2.1[low].apk，升级受管DSH运行时并保留历史数据读取兼容；链接、本地包与更新解析后自动提交并启用。插件维护与终端按用户要求开放未锁定依赖安装、生命周期脚本和修复shell。上游已将Agent预设会话头标签设为只读，并接管模型设置入口；不要把rc1的自定义标签/模型导航补丁重新套回新版本。
 - **独立应急 DSH**：`recovery/RecoveryController` 与 `RecoveryRuntime` 不经过正式环境的迁移、数据绑定及全局启动锁。归档由 `tools/recovery-runtime/lock.json` 单独锁定；应急 Profile 仅有五个受控修复工具，在自身 HOME/workspace 初始化真实工作区。不能用“原生安全 Profile”替代独立运行根。`READY_READ_ONLY` 只允许已鉴权且工具检查通过、但进程身份被系统拒读的本次进程；不得登记正式停止屏障豁免或允许确认写入。
 - **应急请求扩展**：`RecoveryRuntime.prepareProfile` 写入的 `dsha-recovery-agent/package.json` 必须有有效 `name` 与 `version`；锁定 rc2 的官方 `dsh_plugin_packages` 在模型 HTTP 前枚举活动插件。缺版本会抛 `REQUEST_EXTENSION`。宿主夹具必须调用真实 `deepseekLlmApiExtensions.prepare()` 并核对该包；启动没有模型凭据时，原生/网页入口明确提示可先诊断、对话需填写临时密钥。
 - **旧 Web PID 复用**：主 Web 有有效旧 PID+出生身份记录、内核 `kill(pid,0)` 明确 `EPERM` 且二次核验一致时，可以只隔离旧记录，不给该 PID 发信号；这是应用启动 Web 仍在同 UID/运行域的受限判据。单纯 `/proc` 拒读、旧记录缺失或损坏、同 UID 不可核验及隔离试运行继续保留停止屏障，不让用户清数据来摆脱死循环。不得按裸 PID、端口或名称强杀。
 - **应急资产去重**：`recovery-asset-locations.json` 仅映射签名 APK 中的物理位置，不进入应急内容 runtimeId。仅当正式归档 SHA 与独立应急锁完全相同才共用包内字节；不同时必须打包固定应急副本。解压运行根仍独立，不读取正式 rootfs 作为救援依赖。Gradle 追踪实际共享资产及 pinned 副本；增量打包清除已省略的生成归档。当前 APK 门禁必须要求映射存在，历史 ELF 审计才允许无映射格式。
-- **应急修复确认**：`RecoveryRepairBroker` 的 HTTP 接口不能确认写入。原生确认绑定候选、源摘要及数据代次，再经过既有停止屏障和宿主事务；停止应急聊天后，已经确认的原生修复 lease 仍由前台服务保护到结束。`recovery-active` 仅追踪未关闭实例，历史数量不能成为永久启动上限。完整格式化必须先确认应急 guest 和 launcher 均已退出。
-- **移动插件源码修订**：内置 `dsh-web-mobile` 为 `3.0.5`，固定到3.0.5标签之后的上游main提交 `9b16223e6c5ee8209c25034b24fb790990967b3f`。`tools/apply-mobile-client-patches.mjs` 管理本地差异；保留手机快捷键搜索、首次自动聚焦的定向限制、手势取消及聊天区域观察器优化，不恢复上游已撤回的整批改动。更新后执行真实 rc2 Modal/ShortcutReference 行为测试。
+- **应急修复确认**：`RecoveryRepairBroker` 的 HTTP 接口不能确认写入。原生确认绑定候选、源摘要及数据代次，再经过既有停止屏障和宿主事务；停止应急聊天后，已经确认的原生修复 lease 仍由前台服务保护到结束。`recovery-active` 仅追踪未关闭实例，历史数量不能成为永久启动上限。应急运行结束和合法私有维护仍须确认 guest 与 launcher 均已退出；完整格式化生产能力已退休。
+- **build171 移动插件源码修订（历史；当前固定3.1.0见上方）**：内置 `dsh-web-mobile` 为 `3.0.5`，固定到3.0.5标签之后的上游main提交 `9b16223e6c5ee8209c25034b24fb790990967b3f`。`tools/apply-mobile-client-patches.mjs` 管理本地差异；保留手机快捷键搜索、首次自动聚焦的定向限制、手势取消及聊天区域观察器优化，不恢复上游已撤回的整批改动。更新后执行真实 rc2 Modal/ShortcutReference 行为测试。
 - **麦克风**：清单同时声明 `RECORD_AUDIO` 与普通权限 `MODIFY_AUDIO_SETTINGS`，Chromium 的录音设备选择需要两者；不能只验证录音权限。`RECORD_AUDIO` 由 `BrowserMicrophone` 按网页请求申请，不能在普通启动时预授权。WebView 与 Gecko 只放行当前本机页面的纯音频请求，严格核对主机名、实际端口、页面和运行代次；摄像头/屏幕音频拒绝。页面取消后等待旧系统结果排空，各系统请求使用独立注册身份，旧回调不能批准新页。应急 localhost 不与正式 127.0.0.1 混用来源。
 - **备份新要求（2026-09-17）覆盖旧的禁用自动备份规则**：`AutomaticBackups` 默认开启，独立本机计划支持每日、1–168 小时间隔和停止后。使用既有宿主 v5 加密与预检，后台作业不强停 Web/终端。正常自动副本保留 3 份，手动、未知、部分记录不自动删除；插件依赖提示不能改称完全通过。本机密钥和副本不提供卸载存续保证，界面必须引导导出无需密码的副本；历史加密原件的原密码仍需保存。
 - **旧环境清理新要求（2026-09-17）**：覆盖更新在闲时清理可再生缓存及多余健康受管副本；旧运行时的读写不兼容只阻止回退，不能令全部旧组件永久堆积。保留至少两份健康且字节仍符合计划的副本，修改过或含额外文件的原件不删除。新重建通过数据和运行核验后建立 `retired-proof.json`，核对旧树 inode、树摘要、数据归档及映射，再清理 `previous-linux`；无证明的历史重建原件继续保留。
@@ -55,7 +74,7 @@ Material3、单 Gradle 模块 `:app`。
 - 数据格式不能由 APK 或 dsh 版本号推导。`DataFormatEvidence` 对未经完整检查的数据保留 unknown；运行时回退要求读写包与相关持久化配置补丁指纹一致，并继续执行实际试运行。发件人声称的已验证格式不能成为本机兼容或删除原件的依据。
 - 新受管更新使用 `ManagedRuntimeTransaction` / `HostDataTransaction`，旧 `RuntimeUpdateTransaction` 仅保留历史日志恢复。真实隔离 `RuntimeTrial` 核验静态资产/原生模块、实际端口/鉴权、存储和会话写后重开、网页内核与后端握手及 guest 退出后才能提交。回执保存在 rootfs 外，并绑定受管文件摘要。至少保留直接健康前代；只在维护屏障内按已验证策略清理更旧版本，未知或受损原件不自动删除。
 - 旧运行时自动轮换必须重新核对 plan 中的逐根摘要与目录成员，不能仅凭缓存健康回执计数或删除。修改过、不可读或含清单外文件的副本原位保留，也不能将其计入“仍有两份健康前代”的数量。
-- `RuntimeTrial` 必须记录实际 `runtimeMode`。所选 proroot 在鉴权前明确退出、没有插件故障且 guest 已核验退出时，可按 `WebRuntimeFallback` 仅重试一次 proot；保留脱敏失败输出与退出码，回执标明 `fallbackFrom`，不能把 proot 成功报告成 proroot 原生成功。静态检查继续先选 proot，慢启动不触发重试。
+- **历史 proroot 试运行记录规则**：`RuntimeTrial` 必须记录实际 `runtimeMode`。所选 proroot 在鉴权前明确退出、没有插件故障且 guest 已核验退出时，可按 `WebRuntimeFallback` 仅重试一次 proot；保留脱敏失败输出与退出码，回执标明 `fallbackFrom`，不能把 proot 成功报告成 proroot 原生成功。静态检查继续先选 proot，慢启动不触发重试。
 - `RuntimeTrialRecords` 只轮换已确认关闭的现场：保留最近 3 条成功和 5 条失败，未关闭或标记异常的目录不得自动删除并继续要求恢复。不能再以累计 32 次为永久上限；连续 33 次成功/失败交错试运行必须仍可开始下一次。
 - 冷解压和受管候选必须共用内置插件依赖链接与局域网设置补丁准备，先完整准备再计算摘要和切换。不能依赖注册用户 profile 或后续第一次 Web 启动补齐候选。
 - Android 的 `FileInputStream(FileDescriptor)` / `FileOutputStream(FileDescriptor)` 不接管传入描述符；宿主备份通过 `ParcelFileDescriptor` 自动关闭流明确转移所有权。真机验收必须使用非调试构建并检查大量文件读写后的描述符数量。
@@ -66,14 +85,14 @@ Material3、单 Gradle 模块 `:app`。
 - 启动观察器沿用锁定 `dsh-app-boot.resolveBundleDir` 的安装/配置两个 anchor 与 Node 查找顺序，不能只查固定四目录误报全局插件丢失。`persona-compat-patch.json` 仅兼容已知旧 text 字段，保留用户提示词和现有 prefix，不能以默认空内容掩盖无效配置。
 - 维护成功文案不能代替就绪检查；未就绪时留在原生页，不自动跳回循环。维护页的忙状态不使用插件查询/终端等通用锁冒充数据维护。终端出生身份不变；exec 窗口内无效 stat 必须按内核会话号复核，不能直接当作已退出。
 - 配置重置由 `NativeConfigurationReset` 与原 `HostDataTransaction` 执行，只切换已确认的 settings.yaml 和私有工作目录 .env；使用检查后的原生凭据。重置日志仍归 `host-backup-operations`，统一恢复入口按专用记录识别；不再先运行旧 Python 备份，也不接受外部/链接目标作为可安全覆盖的私有配置。
-- 完整格式化对会话、插件、配置、API Key、运行时和其它核心私有根保持严格删除与复核；仅 WebView、`cache`、`code_cache` 等 Android/渲染进程可重新创建的目录可把持续 `ENOTEMPTY`/`FILESYSTEM_39` 降为明确警告。取消必须继续抛出，核心根的相同错误不得借可再生缓存规则降级；完成后仍回欢迎页重新开始。
+- **完整格式化已退休**：不得恢复生产 UI、Intent、任务或擦除后端。历史日志只读解析并保留；合法维护的私有暂存清理继续限定本机编号根、NOFOLLOW 与退出屏障，取消继续抛出，个人数据根的错误不得借可再生缓存规则降级。
 - 同基础版本的旧 dsh 缺失或被修改仍走受管更新，不因 package.json 检查失败转成 Ubuntu 重建。覆盖更新不归档系统；确需重建时只保护对话、附件、配置、插件与个人项目，旧系统目录仅通过同盘改名暂存作回切。
 - 就绪检查必须解析实际 `/bin/bash` 的 ELF 和加载器路径，不能以 `/usr/bin/bash` 或旧标记存在代替；可执行位使用 lstat，不能用受 Android W^X 影响的 canExecute。损坏系统不得反复执行配置安全启动，应进入环境修复。
 - 基础重建的数据保护由宿主 `MaintenanceDataSnapshot` / `MaintenanceDataRestore` 与 `EnvironmentRebuildTransaction` 执行；无生产调用者的 `EnvironmentDataBackup` 和 `environment-data.py` 已保留原字节后退休。旧日志/归档读者继续保留；独立旧工具只用于仍有明确消费者的维护职责，不能作为新宿主归档的隐式回退。未完成安装且无法确认旧数据位置时不能宣称全量对话备份。
 - 附件模块与文件/会话模块共用 dsha-runtime-fs 原子发布：附件别名必须保留源对象并保留 EEXIST 语义；老内核仅在协作发布者之间使用加锁降级。验证真实图片、文件、流式写入、同摘要别名、冲突和取消，并覆盖私有目录与 attachments 软链到 Android FUSE 的路径。
 - 旧的按启动次数自动备份保持删除。按上方用户新要求使用独立 v5 自动备份计划，不复活历史计数偏好；普通启动不得遍历整个工作区或会话目录做旧链接修复。
 - APK 使用 `offline-rootfs.layout=split-runtime-v1` 标记 Ubuntu 与 `dsh-runtime.bin` 分包；冷安装两份都解压，局部更新仅读 dsh 包。两份内容各保留一份，不改基础环境身份，构建核验两份摘要及运行时完整性。
-- 数据维护先关闭 PTY 与简易终端，再取得 `RuntimeTasks` 屏障；proroot 终端按本次独立会话核验并回收 guest，不能只结束启动器就释放工作锁。无法确认时保留原环境。
+- 数据维护先关闭 PTY 与简易终端，再取得 `RuntimeTasks` 屏障；引擎终端按本次独立会话及受管后代树核验并回收 guest，不能只结束启动器就释放工作锁。无法确认时保留原环境。
 - PTY 出生身份在原生 fork/exec 握手中登记：子进程自读 stat，父进程确认后才 exec。不得退回 Java 启动后单次读取，或停止时按裸 PID 临时认领；终端维护必须补测非调试 APK，调试版不能覆盖发布版的进程信息访问时序。
 - `client-combo-patch.json` 与 `client-combo-cache` 适配锁定的网页拼接器；只复用上一轮未变化的脚本/映射，HMR、插件移除和顺序变化必须失效，保留上游脚本、源码映射、URL 与修订号语义。
 - 网页 ES 兼容依赖锁在 `tools/web-compat/`，运行 `node tools/prepare-web-compat.mjs` 生成随包脚本、许可和输入摘要；构建核验摘要。官方 PDF 模块与独立 Worker 都需要兼容代码，旧 Chromium 的非特殊 URL 文件协议需单独适配；不能只在桌面新浏览器或预热环境验证。
@@ -88,7 +107,7 @@ Material3、单 Gradle 模块 `:app`。
 - Web 启动等待鉴权不设强制终止时限，60 秒仅提示；保持 `isStarting`，避免看门狗把慢启动当故障。停止与维护必须共用 `WebProcessManager` 的 PID 身份/进程核验，不能重复使用裸 `kill(pid, 0)` 阻塞过期编号。
 - Web 首选端口冲突时保留用户配置，先尝试本机成功备用端口，否则由锁定 dsh 的 `--port 0` 分配。动态鉴权只接收本轮官方启动行；保活、鉴权和 LAN 必须使用实际 Web 端口，不能继续探测已被占用的首选端口，也不能按端口猜 PID 终止进程。
 - 旧 WebView 的 AbortSignal.any/timeout 与随机 UUID 补齐沿用 1.1.10 的提前注入思路：共同兼容脚本须进入受管 HTML 的应用脚本之前，并覆盖文档起始与 Worker；不能只在加载结束后隐藏能力错误。保留原生实现、取消原因与监听清理，验证接口缺失时的真实页面及重载。
-- 启动诊断通过 `StartupDiagnostics` / `StartupTrace` 保存阶段、实际插件错误和退出码；失败输出另存，后续启动不可覆盖。兼容重试仅在 proroot 已确认退出、鉴权前且没有明确插件故障时进行一次，不能由超时触发。
+- 启动诊断通过 `StartupDiagnostics` / `StartupTrace` 保存阶段、实际插件错误和退出码；失败输出另存，后续启动不可覆盖。兼容重试按本轮 bxroot 启动规则执行：合格只读探测失败或可信监督器证明引擎未执行，没有插件故障或用户业务，本轮后代树与 launcher 均已确认退出；只重试一次，不能由超时触发。
 - 启动日志区分应用事件与原始进程输出：应用事件在显示时按语言渲染，不能全文替换命令、插件异常或用户内容。维护横幅只读取数据维护状态，不能把启动、插件查询或终端使用的通用执行锁当成维护。
 - 明确的启动配置/插件故障或启动进程退出后自动进入原生 `StartupRecoveryActivity`；等待鉴权本身不是故障。最近五次脱敏启动记录独立保存在私有目录。六文件检查点现由宿主 `ConfigurationSnapshots` 执行，原生读取旧 `startup-checkpoints.py` v1 数据；正文逐文件存于 rootfs 外，保留三次健康与三次修复前快照。健康快照须匹配启动前捕获的内容及本轮启动 ID。配置恢复/新建仍通过 `BackupTask` 停止屏障；旧日志已提交后不得覆盖后来修改的配置。缺日志的旧状态标记只保留并解除，不猜测要回滚哪份数据。
 - 原生插件归档记录 package、profile 与 shared 的实际绑定，包含未声明但确实存在的依赖。`PluginRestoreGraph` 在同一隔离目录重建相对依赖链接及命令入口，保留改写前声明，不运行安装钩子。缺少可验证的当前受管依赖时，保留源码并报告关系未完整，不能伪称插件已启用或可运行。
@@ -143,7 +162,7 @@ Material3、单 Gradle 模块 `:app`。
 - `Query`：逐参数名匹配（`indexOf(key+"=")` 会被后缀劫持，已修）；「参数为空」≠「参数不存在」。
 - `BackupScope`：部分备份绝不叫 `DSHA-backup-*`（否则老版本当全量恢复会清掉配置与插件）；
   `dshPaths` 与 `mergeSubdirs` 一一对应。
-- `WebProcSel`：认得出 dsh 进程、**绝不误杀 proot/proroot**（杀到容器启动器 = 环境连 App 一起带走）。
+- `WebProcSel`：认得出 dsh 进程、**绝不把 bxroot/proot 或历史 proroot 误认成 DSH 进程**（杀到容器启动器 = 环境连 App 一起带走）。
 
 ## 已知 trap（搬自原版，骨架已按此设计）
 

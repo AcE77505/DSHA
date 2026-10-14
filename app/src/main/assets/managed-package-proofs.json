@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "archiveSha256": "3ddafc8f83fec8f13b9dfec7d51686af1d1aa82771e8dd0a65efb913d03b7bbb",
+  "archiveSha256": "f8a502d2e45f3150a77dfba7a3dd5aedd2aa482aff7eadcbba542ec079249237",
   "packages": {
     ".bin": "d4b7d36c493b16ca2c6c8166e7a4d5ad1b9442dd6e8058e09c19fff69b87fc98",
     "@agentclientprotocol/sdk": "2ad364c17a32f29dd05f7d28a052359a893f009ff5ad283e0acb5dd621deb765",
@@ -437,7 +437,7 @@
     "dfa": "a1c9505cb158b4e9bfd81b80a23f41fe84532cc982a8afdd675428a89d11a863",
     "diff": "c07cfcbb32292f23143c0b7c6e56dc565effd2dd04c8386c4b510fa6fea1c28f",
     "dsha-client-combo-cache": "7ac5fe2ba909af9d5481d1d198523c092289a9723049e10f9f7077963cc45253",
-    "dsha-runtime-fs": "5a668e4be2860433cbd20bdc416ee32777ab07541f0cc4c07ce520af0257b60b",
+    "dsha-runtime-fs": "ee0ba4d73ae64fd9e1ef87d183cb84902c74890b26a8ed1cc8c4dc7c70fee095",
     "dsha-session-compat": "49b1fb02db1214f37101534f7d7849a67d646e9e4e38b9d6813a3a9557f9a8e9",
     "dunder-proto": "8d8b4438170fdf8c718e217f30bd2ef1e14ad8c41854fcc83a5f1829aa6b7137",
     "ecdsa-sig-formatter": "5a77617f74ec5a1af70de15d59553c2d3b2b3647128aba2d70b086cae12d6cb2",

@@ -83,6 +83,8 @@
                 android:value="User-started emergency AI recovery workspace with an isolated runtime, foreground progress, and explicit stop action." />
         </service>
         <activity android:name=".ui.BackgroundTasksActivity" android:exported="false" />
+        <activity android:name=".ui.AgentTasksActivity" android:exported="false" />
+        <receiver android:name=".AgentTaskStopReceiver" android:exported="false" />
         <activity android:name=".ui.NativeDataActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ui.WorkspaceFilesActivity" android:exported="false" />
           <activity android:name=".ui.StorageHelpActivity" android:exported="false" />
@@ -144,10 +146,12 @@
             android:name=".ui.WebPreviewActivity"
             android:exported="false"
             android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.conversation"
+            android:excludeFromRecents="true"
             android:supportsPictureInPicture="true"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.DeepseekHarness" />
+            android:theme="@style/Theme.DSHA.Conversation" />
 
         <activity
             android:name=".ui.ExtractActivity"

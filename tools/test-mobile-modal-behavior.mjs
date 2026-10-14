@@ -58,6 +58,8 @@ try {
   await page.keyboard.press('Tab');
   assert.equal(await search.evaluate(el => el === document.activeElement), true, 'Tab 可进入搜索');
   await search.fill('Action 31');
+  // Firefox fill通过composition完成文字；释放其关闭键后再验证独立的Escape命令。
+  await page.keyboard.press('ArrowRight');
   assert.equal(await modal.locator('li').count(), 1, '真实目录过滤生效');
   await modal.getByRole('button', {name:'clear-search', exact:true}).click();
   assert.equal(await search.inputValue(), '');

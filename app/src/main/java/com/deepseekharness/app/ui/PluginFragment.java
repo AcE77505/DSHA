@@ -707,6 +707,20 @@ public class PluginFragment extends Fragment {
                                 : com.deepseekharness.app.util.UiText.format(
                                     "\n可回退：%s", item.rollbackVersion))))
                     .setPositiveButton(com.deepseekharness.app.util.UiText.text("关闭"), null)
+                    .setNeutralButton(
+                        com.deepseekharness.app.util.UiText.choose("能力声明", "Capabilities"),
+                        (dialog, button) ->
+                            repository.inspectCapabilities(
+                                item,
+                                details -> {
+                                  if (!isAdded()) return;
+                                  new DshaDialogBuilder(requireContext())
+                                      .setTitle(item.name)
+                                      .setMessage(details)
+                                      .setPositiveButton(
+                                          com.deepseekharness.app.util.UiText.text("关闭"), null)
+                                      .show();
+                                }))
                     .show();
               } else if (action == PluginAction.CHECK) {
                 repository.checkUpdates(item);

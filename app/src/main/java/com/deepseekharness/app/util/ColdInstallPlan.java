@@ -13,6 +13,7 @@ public final class ColdInstallPlan {
   private ColdInstallPlan() {}
 
   public enum Mode {
+    BXROOT("bxroot", false),
     PROROOT("proroot", false),
     PROROOT_DYNAMIC("proroot", false),
     PROOT("proot", false),
@@ -75,25 +76,28 @@ public final class ColdInstallPlan {
   public static List<Mode> modes(
       boolean preferProroot, boolean prorootAvailable, boolean isolated, boolean noSeccomp) {
     List<Mode> modes = new ArrayList<>();
-    if (preferProroot && prorootAvailable && isolated) modes.add(Mode.PROROOT);
-    if (!noSeccomp) modes.add(Mode.PROOT);
-    modes.add(Mode.PROOT_COMPAT);
+    if (preferProroot && prorootAvailable && isolated) modes.add(Mode.BXROOT);
+    modes.add(noSeccomp ? Mode.PROOT_COMPAT : Mode.PROOT);
     return List.copyOf(modes);
   }
 
-  /** At most three probes and one package installation; no retry after package writes. */
+  /** At most two probes and one package installation; no retry after package writes. */
   public static Mode run(List<Mode> modes, Runner runner, Recorder recorder)
       throws IOException, InterruptedException {
     if (modes.isEmpty()
-        || modes.size() > 3
-        || modes.contains(Mode.PROROOT_DYNAMIC)
+        || modes.size() > 2
+        || modes.stream().anyMatch(mode -> !mode.runtime.matches("bxroot|proot"))
         || modes.stream().distinct().count() != modes.size())
       throw new IllegalArgumentException("COLD_RUNTIME_PLAN");
     for (Mode mode : modes) {
       Observation probe = runner.run(mode, true);
       recorder.record(mode, true, probe);
       if (!probe.exited) throw new IOException("COLD_INSTALL_PROCESS_EXIT_UNCONFIRMED");
-      if (!probe.ready(PROBE_READY)) continue;
+      if (probe.timedOut) throw new IOException("COLD_RUNTIME_PROBE_TIMED_OUT_NO_REPLAY");
+      if (!probe.ready(PROBE_READY)) {
+        if (mode == Mode.BXROOT && capabilityFailure(probe)) continue;
+        throw new IOException("COLD_RUNTIME_PROBE_FAILED_NO_REPLAY:" + probe.diagnostic);
+      }
       Observation installed = runner.run(mode, false);
       recorder.record(mode, false, installed);
       if (!installed.exited) throw new IOException("COLD_INSTALL_PROCESS_EXIT_UNCONFIRMED");
@@ -114,15 +118,15 @@ public final class ColdInstallPlan {
   /** 仅未显式选方式的首次签名覆盖层可尝试修复静态 loader 的已确认特定退出。 */
   public static boolean allowDynamicLoaderRetry(
       boolean freshCandidate, boolean automatic, boolean forceProot, boolean staticLoader) {
-    return freshCandidate && automatic && !forceProot && staticLoader;
+    return false;
   }
 
   public static Mode runConfigured(
       List<Mode> modes, boolean allowDynamicLoaderRetry, Runner runner, Recorder recorder)
       throws IOException, InterruptedException {
     if (modes.isEmpty()
-        || modes.size() > 3
-        || modes.contains(Mode.PROROOT_DYNAMIC)
+        || modes.size() > 2
+        || modes.stream().anyMatch(mode -> !mode.runtime.matches("bxroot|proot"))
         || modes.stream().distinct().count() != modes.size())
       throw new IllegalArgumentException("COLD_RUNTIME_PLAN");
     for (Mode mode : modes) {
@@ -130,14 +134,19 @@ public final class ColdInstallPlan {
       recorder.record(mode, true, result);
       if (!result.exited) throw new IOException("COLD_INSTALL_PROCESS_EXIT_UNCONFIRMED");
       if (result.ready(PROBE_READY) && result.ready(INSTALL_READY)) return mode;
-      if (allowDynamicLoaderRetry && mode == Mode.PROROOT && staticSignalStackFailure(result)) {
-        Observation dynamic = runner.run(Mode.PROROOT_DYNAMIC, true);
-        recorder.record(Mode.PROROOT_DYNAMIC, true, dynamic);
-        if (!dynamic.exited) throw new IOException("COLD_INSTALL_PROCESS_EXIT_UNCONFIRMED");
-        if (dynamic.ready(PROBE_READY) && dynamic.ready(INSTALL_READY)) return Mode.PROROOT_DYNAMIC;
-      }
+      if (result.timedOut) throw new IOException("COLD_CONFIGURED_TIMED_OUT_NO_REPLAY");
+      if (!(mode == Mode.BXROOT && capabilityFailure(result)))
+        throw new IOException("COLD_CONFIGURED_CHECK_FAILED_NO_REPLAY:" + result.diagnostic);
     }
     throw new IOException("COLD_CONFIGURED_CHECK_FAILED");
+  }
+
+  private static boolean capabilityFailure(Observation result) {
+    return result.exited
+        && !result.timedOut
+        && (RuntimeEnginePolicy.engineFailure(result.output)
+            || result.output != null
+                && result.output.contains("DSHA_ENGINE_CAPABILITY_UNSUPPORTED"));
   }
 
   private static boolean staticSignalStackFailure(Observation result) {
@@ -176,6 +185,8 @@ public final class ColdInstallPlan {
                 + "assert open(p,'rb').read()==b'DSHA_COLD_VERIFIED'; assert hashlib.sha256(b'probe').digest(); "
                 + "assert sqlite3.sqlite_version; assert ssl.OPENSSL_VERSION")
         + " \"$probe/plain\"\n"
+        + RuntimeCapabilityProbe.packageTools()
+        + "\n"
         + "printf '\\n"
         + PROBE_READY
         + "\\n'\n";

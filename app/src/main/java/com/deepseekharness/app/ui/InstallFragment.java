@@ -113,13 +113,6 @@ public class InstallFragment extends Fragment {
             });
     view.findViewById(R.id.install_copy).setOnClickListener(v -> copyLog());
     view.findViewById(R.id.install_uninstall).setOnClickListener(v -> confirmMaintenance());
-    view.findViewById(R.id.install_factory_reset)
-        .setOnClickListener(
-            v ->
-                startActivity(
-                    new Intent(requireContext(), ExtractActivity.class)
-                        .putExtra("review_only", true)
-                        .putExtra("request_factory_reset", true)));
     for (int i = 0; i < STEP_IDS.length; i++) {
       final int step = i + 1;
       view.findViewById(STEP_IDS[i]).setOnClickListener(v -> showStep(step));
@@ -296,7 +289,6 @@ public class InstallFragment extends Fragment {
             ? com.deepseekharness.app.util.UiText.text("恢复中断维护")
             : com.deepseekharness.app.util.UiText.text("备份并重建环境"));
     maintenance.setEnabled(!state.busy() && !environmentBusy);
-    view.findViewById(R.id.install_factory_reset).setEnabled(!state.busy() && !environmentBusy);
     Button cancel = view.findViewById(R.id.install_cancel);
     cancel.setVisibility(state.busy() ? View.VISIBLE : View.GONE);
     cancel.setEnabled(!state.cancelRequested);

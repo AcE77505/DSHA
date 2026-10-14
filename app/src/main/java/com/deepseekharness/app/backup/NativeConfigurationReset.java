@@ -11,15 +11,23 @@ public final class NativeConfigurationReset implements HostDataTransaction.Targe
   private final File files, directory;
   private final UserDataLayout.Home home;
   private final String workspace;
+  private final boolean environmentEnabled;
 
   private NativeConfigurationReset(
-      BackupFileSystem fs, File files, File directory, UserDataLayout.Home home, String workspace)
+      BackupFileSystem fs,
+      File files,
+      File directory,
+      UserDataLayout.Home home,
+      String workspace,
+      boolean environmentEnabled)
       throws IOException {
     this.fs = fs;
     this.files = files.getAbsoluteFile();
     this.directory = directory.getAbsoluteFile();
     this.home = home;
-    this.workspace = normalizeWorkspace(workspace);
+    this.environmentEnabled = environmentEnabled;
+    this.workspace =
+        environmentEnabled ? normalizeWorkspace(workspace) : checkedWorkspace(workspace);
     File operations = HostOperationArchive.root(this.files),
         completed = HostOperationArchive.completedRoot(this.files);
     if (!directory.getParentFile().getAbsoluteFile().equals(operations)
@@ -56,6 +64,14 @@ public final class NativeConfigurationReset implements HostDataTransaction.Targe
     return path;
   }
 
+  private static String checkedWorkspace(String value) throws IOException {
+    if (value == null || value.isEmpty()) throw new IOException("RESET_WORKSPACE_UNAVAILABLE");
+    String path = value.startsWith("/") ? value.substring(1) : "root/" + value;
+    while (path.endsWith("/")) path = path.substring(0, path.length() - 1);
+    BackupLimits.path(path);
+    return path;
+  }
+
   @Override
   public File resolve(String id) throws IOException {
     String relative;
@@ -63,7 +79,7 @@ public final class NativeConfigurationReset implements HostDataTransaction.Targe
       relative =
           (home == UserDataLayout.Home.LEGACY ? UserDataLayout.LEGACY : UserDataLayout.STABLE)
               + "/settings.yaml";
-    else if (id.equals("environment"))
+    else if (id.equals("environment") && environmentEnabled)
       relative = com.deepseekharness.app.util.GuestPaths.ROOT_RELATIVE + "/" + workspace + "/.env";
     else throw new IOException("RESET_TARGET");
     File target = fs.child(files, relative);
@@ -72,6 +88,8 @@ public final class NativeConfigurationReset implements HostDataTransaction.Targe
       throw new IOException("RESET_CONFIG_LINK_OR_SPECIAL");
     if (node.size > 1024 * 1024) throw new IOException("RESET_CONFIG_SIZE");
     if (fs.stat(target.getParentFile()).device != fs.stat(directory).device)
+      throw new IOException("RESET_FILESYSTEM_BOUNDARY");
+    if (!node.type.equals("MISSING") && node.device != fs.stat(directory).device)
       throw new IOException("RESET_FILESYSTEM_BOUNDARY");
     return target;
   }
@@ -87,14 +105,47 @@ public final class NativeConfigurationReset implements HostDataTransaction.Targe
       throws IOException {
     if (environment == null || environment.length > 1024 * 1024)
       throw new IOException("RESET_CONFIG_SIZE");
-    String workspace = normalizeWorkspace(workdir);
+    String workspace;
+    boolean includeEnvironment = true;
+    try {
+      workspace = normalizeWorkspace(workdir);
+    } catch (IOException outside) {
+      if (!"RESET_WORKSPACE_OUTSIDE_PRIVATE_HOME".equals(outside.getMessage())
+          || workdir == null
+          || !workdir.matches("^/(?:sdcard|storage|mnt)(?:/.*)?$")) throw outside;
+      workspace = checkedWorkspace(workdir);
+      includeEnvironment = false;
+    }
+    if (includeEnvironment) {
+      // .env 只在可证明的私有普通文件位置重置。链接/失权只省略这一根，绝不猜测其目标。
+      try {
+        File target =
+            fs.child(
+                files,
+                com.deepseekharness.app.util.GuestPaths.ROOT_RELATIVE + "/" + workspace + "/.env");
+        var node = fs.stat(target);
+        String type = node.type;
+        includeEnvironment =
+            Set.of("FILE", "MISSING").contains(type)
+                && fs.stat(target.getParentFile()).device == fs.stat(files).device
+                && (type.equals("MISSING") || node.device == fs.stat(files).device);
+      } catch (IOException unavailable) {
+        includeEnvironment = false;
+      }
+    }
     File parent = HostOperationArchive.reserve(fs, files);
     File owned = new File(parent, UUID.randomUUID().toString());
     fs.directory(owned);
     var reset =
         new NativeConfigurationReset(
-            fs, files, owned, new UserDataLayout(fs, files).selected(), "/" + workspace);
-    List<String> roots = List.of("settings", "environment");
+            fs,
+            files,
+            owned,
+            new UserDataLayout(fs, files).selected(),
+            "/" + workspace,
+            includeEnvironment);
+    List<String> roots =
+        includeEnvironment ? List.of("settings", "environment") : List.of("settings");
     Map<String, String> before = new LinkedHashMap<>();
     for (String root : roots) before.put(root, BackupTree.digest(fs, reset.resolve(root), control));
     try (OutputStream out = fs.create(new File(owned, RECORD))) {
@@ -102,13 +153,15 @@ public final class NativeConfigurationReset implements HostDataTransaction.Targe
           BackupJson.write(
               Map.of(
                   "version",
-                  1L,
+                  2L,
                   "id",
                   owned.getName(),
                   "home",
                   reset.home.name(),
                   "workspace",
-                  "/" + workspace),
+                  "/" + workspace,
+                  "environmentEnabled",
+                  includeEnvironment),
               4096));
     }
     fs.syncDirectory(owned);
@@ -117,9 +170,10 @@ public final class NativeConfigurationReset implements HostDataTransaction.Targe
     try (OutputStream out = fs.create(new File(candidate, "settings"))) {
       out.write("{}\n".getBytes(StandardCharsets.UTF_8));
     }
-    try (OutputStream out = fs.create(new File(candidate, "environment"))) {
-      out.write(environment);
-    }
+    if (includeEnvironment)
+      try (OutputStream out = fs.create(new File(candidate, "environment"))) {
+        out.write(environment);
+      }
     HostDataTransaction transaction = new HostDataTransaction(fs, owned, reset, settings, fault);
     transaction.prepare(roots, before, settings.current(), control);
     try {
@@ -155,8 +209,11 @@ public final class NativeConfigurationReset implements HostDataTransaction.Targe
       HostDataTransaction.Fault fault)
       throws IOException {
     Map<String, Object> record = BackupJson.read(fs.small(new File(directory, RECORD), 4096), 4096);
-    if (BackupJson.number(record, "version") != 1
+    long version = BackupJson.number(record, "version");
+    if ((version != 1 && version != 2)
         || !directory.getName().equals(BackupJson.string(record, "id")))
+      throw new IOException("RESET_OPERATION_RECORD");
+    if (version == 2 && !(record.get("environmentEnabled") instanceof Boolean))
       throw new IOException("RESET_OPERATION_RECORD");
     UserDataLayout.Home home;
     try {
@@ -166,7 +223,12 @@ public final class NativeConfigurationReset implements HostDataTransaction.Targe
     }
     var reset =
         new NativeConfigurationReset(
-            fs, files, directory, home, BackupJson.string(record, "workspace"));
+            fs,
+            files,
+            directory,
+            home,
+            BackupJson.string(record, "workspace"),
+            version == 1 || Boolean.TRUE.equals(record.get("environmentEnabled")));
     new HostDataTransaction(fs, directory, reset, settings, fault).recover();
     clearRolledBackPlaintext(fs, directory);
   }
@@ -191,7 +253,16 @@ public final class NativeConfigurationReset implements HostDataTransaction.Targe
         Object hash = ((Map<?, ?>) item).get("after");
         if (hash instanceof String) expected = (String) hash;
       }
-    if (expected == null || !expected.matches("[a-f0-9]{64}")) throw new IOException("RESET_PLAN");
+    if (expected == null) {
+      for (String relative : List.of("candidate/environment", "failed/environment")) {
+        File parent = fs.child(directory, relative.split("/")[0]);
+        if (fs.stat(parent).type.equals("MISSING")) continue;
+        if (!fs.stat(fs.child(parent, "environment")).type.equals("MISSING"))
+          throw new IOException("RESET_PLAN");
+      }
+      return;
+    }
+    if (!expected.matches("[a-f0-9]{64}")) throw new IOException("RESET_PLAN");
     for (String relative : List.of("candidate/environment", "failed/environment")) {
       String[] parts = relative.split("/");
       File parent = fs.child(directory, parts[0]);
@@ -206,5 +277,12 @@ public final class NativeConfigurationReset implements HostDataTransaction.Targe
         fs.syncDirectory(parent);
       } else if (!type.equals("MISSING")) throw new IOException("RESET_CANDIDATE_TYPE");
     }
+  }
+
+  public static boolean retainedEnvironment(BackupFileSystem fs, File directory)
+      throws IOException {
+    Map<String, Object> record = BackupJson.read(fs.small(fs.child(directory, RECORD), 4096), 4096);
+    return BackupJson.number(record, "version") == 2
+        && Boolean.FALSE.equals(record.get("environmentEnabled"));
   }
 }

@@ -12,7 +12,7 @@ export function apply(ctx) {
       res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff',
         'content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src http://127.0.0.1:*; base-uri 'none'; frame-ancestors 'none'"});
       res.end(req.method === 'HEAD' ? undefined : page);
-    }), 'dsha-browser-origin-restore');
+    }}), 'dsha-browser-origin-restore');
   });
   const generation = process.env.DSHA_WEB_GENERATION;
   if (!generation) return;

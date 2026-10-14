@@ -100,6 +100,8 @@ public class PluginInstallJournalsTest {
                   });
       assertTrue(PluginInstallJournals.pending(counted, home).isEmpty());
       assertEquals(1, historyLists[0]);
+      assertFalse(new File(root, ".completed-proof-v1.json").exists());
+      PluginInstallJournals.archiveCompleted(counted, home);
       calls[0] = historyLists[0] = 0;
       long start = System.nanoTime();
       for (int i = 0; i < 5; i++)

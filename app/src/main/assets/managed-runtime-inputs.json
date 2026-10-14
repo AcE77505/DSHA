@@ -3,6 +3,26 @@
   "purpose": "Signed host-managed runtime inputs; the installer, descriptor and Gradle consume this same contract. User data and recovery runtime are outside this contract.",
   "installs": [
     {
+      "asset": "plugin-capabilities.py",
+      "target": "root/.dsh/plugin-capabilities.py",
+      "executable": false
+    },
+    {
+      "asset": "plugin-capabilities.cjs",
+      "target": "root/.dsh/plugin-capabilities.cjs",
+      "executable": false
+    },
+    {
+      "asset": "plugin-acorn.cjs",
+      "target": "root/.dsh/plugin-acorn.cjs",
+      "executable": false
+    },
+    {
+      "asset": "plugin-acorn.LICENSE",
+      "target": "root/.dsh/plugin-acorn.LICENSE",
+      "executable": false
+    },
+    {
       "asset": "ca-certificates.crt",
       "target": "usr/local/share/dsha/ca-certificates.crt",
       "executable": false
@@ -1586,6 +1606,26 @@
       "asset": "pc-migration/portable-yaml.mjs",
       "target": "usr/local/share/dsha/pc-migration/portable-yaml.mjs",
       "executable": false
+    },
+    {
+      "asset": "destructive-policy/index.js",
+      "target": "usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/dsha-destructive-policy/index.js",
+      "executable": false
+    },
+    {
+      "asset": "destructive-policy/package.json",
+      "target": "usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/dsha-destructive-policy/package.json",
+      "executable": false
+    },
+    {
+      "asset": "destructive-policy/destructive.js",
+      "target": "usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/dsha-destructive-policy/destructive.js",
+      "executable": false
+    },
+    {
+      "asset": "destructive-policy/workdir.js",
+      "target": "usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/dsha-destructive-policy/workdir.js",
+      "executable": false
     }
   ],
   "assetFiles": [
@@ -1624,12 +1664,20 @@
     "frontend-static-cache-patch.json",
     "sidebar-layout-recovery-patch.json",
     "dsha-layout-recovery.js",
-    "portable-tools.manifest.json"
+    "portable-tools.manifest.json",
+    "bxroot-native-lock.json",
+    "licenses/DSHA-MIT.txt",
+    "licenses/bxroot-MIT.txt",
+    "licenses/bxroot-glibc-COPYING.LIB.txt",
+    "licenses/bxroot-glibc-copyright.txt",
+    "licenses/bxroot-gcc-copyright.txt",
+    "licenses/GCC-RUNTIME-EXCEPTION-3.1.txt"
   ],
   "assetTrees": [
     "web-integration",
     "app-integration",
-    "client-combo-cache"
+    "client-combo-cache",
+    "destructive-policy"
   ],
   "launcherTrees": [
     "app/src/main/jniLibs",
@@ -1791,7 +1839,16 @@
     "util/VirtualScreenRoutes.java",
     "util/VirtualScreenStroke.java",
     "util/VirtualScreenWindowPolicy.java",
-    "core/ColdSetupTiming.java"
+    "core/ColdSetupTiming.java",
+    "util/RuntimeEnginePolicy.java",
+    "util/RuntimeCapabilityProbe.java",
+    "util/AgentTaskState.java",
+    "util/AgentTaskRegistration.java",
+    "util/RuntimeInstanceRegistry.java",
+    "util/WebRuntimeFallback.java",
+    "util/InstallProcess.java",
+    "util/AccessibilityTreeBudget.java",
+    "util/ScreenConfirmationPolicy.java"
   ],
   "generatorSources": [
     "tools/mobile-server/compress.js",
@@ -1821,6 +1878,33 @@
     "tools/pc-migration/prepare-assets.py",
     "tools/pc-migration/README.md",
     "tools/pc-migration/vendor/yaml-2.9.1.tgz",
-    "tools/generate-third-party-notices.py"
+    "tools/generate-third-party-notices.py",
+    "tools/mobile-plugin-upstream.lock.json",
+    "tools/prepare-mobile-plugin.py",
+    "tools/mobile-viewport-sync.js",
+    "tools/mobile-plugin-upstream/lib/client.js",
+    "tools/mobile-plugin-upstream/lib/compress.js",
+    "tools/mobile-plugin-upstream/lib/delete-session.js",
+    "tools/mobile-plugin-upstream/lib/index.js",
+    "tools/native_runtime_proof.py",
+    "tools/prepare-bxroot-native-proof.py",
+    "tools/native-packaging.lock.json",
+    "tools/bxroot/lock.json",
+    "tools/bxroot/build.py",
+    "tools/bxroot/build-linux.sh",
+    "tools/bxroot/overlay.py",
+    "tools/bxroot/test-linux.py",
+    "tools/bxroot/probe.c",
+    "tools/bxroot/static-exec.S",
+    "tools/native-dependencies.lock.json",
+    "tools/native-session/build.py",
+    "tools/native-session/session-launcher.c",
+    "tools/plugin-capabilities/package.json",
+    "tools/plugin-capabilities/package-lock.json",
+    "tools/plugin-capabilities/parser-lock.json",
+    "tools/vendor-plugin-capabilities.cjs",
+    "tools/termux-jni/dsha-pty.c",
+    "tools/termux-jni/dsha-process.c",
+    "tools/termux-jni/build.ps1"
   ]
 }

@@ -22,7 +22,7 @@
 > 🤖 If you are an AI agent or a new contributor, read **[AGENTS.md](AGENTS.md)** first
 > (structure, startup contracts, traps we already fell into). Don't scan the whole repo.
 
-> Local integration build171 uses `dsha-0.2.0-rc2.1[low].apk`. It has not been uploaded or accepted on devices; see the [local report](docs/releases/v0.2.22-build171-20261013.md). The published download links below still identify build170.
+> This repository now contains build173 source: bxroot migration, mobile UI 3.1.0, external-workspace protection, export and PiP recovery fixes. See the [source update notes](docs/source-updates/build173.md). This update publishes source and Star History only; the APK download links below still identify build170. Low device acceptance remains deferred.
 
 ## ❤️ Sponsor
 
@@ -107,7 +107,7 @@ That's it. For finer control, use the step-by-step install — each step can be 
 |---|---|
 | 🚫 **Zero command-line barrier** | Offline Ubuntu rootfs bundled in the APK. No Termux, no pkg, nothing to type |
 | 🐧 **Full glibc environment** | Not a trimmed distro: `apt` / PTY / native modules / Python / git all included. Upstream plugins run unmodified |
-| ⚡ **proroot, zero ptrace overhead** | Classic proot pays two context switches per syscall; proroot does in-process path translation via LD_PRELOAD + binary patching. Measured **+58%** on key benchmarks on a real device |
+| ⚙️ **bxroot / proot** | bxroot is preferred, with proot for compatibility. Android performance and compatibility require evidence from this version |
 | 🔌 **The phone is the agent's hands** | Accessibility + ADB without Shizuku + an independent virtual display: read screens, tap, install apps, run automations — all built in |
 | 💾 **Export for migration** | Data & backups exports password-free `.tar.gz` archives. Storage guidance shows the actual location; local copies are not guaranteed to survive uninstall |
 | 🩺 **Failures that explain themselves** | Component-level checks + on-demand repair + startup diagnostics + an independent recovery DSH; when the web UI won't start, it names the plugin at fault |
@@ -132,9 +132,9 @@ That's it. For finer control, use the step-by-step install — each step can be 
 
 | Capability | Details |
 |---|---|
-| proroot / proot dual runtime | Stable proot is the default; proroot can be selected in Configure, subject to device compatibility |
-| Measured speedups | vivo V2352A / Android 14: +58% across key benchmarks, +94% tar packaging (backups use this path), +82% stat-heavy workloads (node module resolution) |
-| Bounded compatibility fallback | Retry proot once only after proroot exits before authentication without a plugin failure and guest exit is confirmed; slow startup never triggers fallback |
+| bxroot / proot dual runtime | First upgrades prefer bxroot; an explicit proot choice is retained, subject to device compatibility |
+| Performance evidence | Historical proroot benchmarks do not describe bxroot. No Android performance acceptance this round |
+| Bounded compatibility fallback | Retry proot once after an explicit bxroot engine startup failure with no plugin failure or business submission, and verified descendant-tree and launcher exit. Unknown results are never replayed |
 | Node.js 24 + pnpm 10 | Same runtime as upstream, versions pinned with the APK |
 | Split-package updates | Ubuntu and the dsh runtime ship as separate packages inside the APK; cold installs extract both, partial updates read only the dsh package |
 | Managed update trials | A new environment boots for real in an isolated area first — ports, auth, session read/write and plugin loading are verified before it is committed; failures roll back automatically |
@@ -154,7 +154,7 @@ That's it. For finer control, use the step-by-step install — each step can be 
 | Older backup compatibility | Full authentication/digest verification precedes restore preview; unknown or incomplete dependencies are reported. The current APK rebuilds system plugins, retaining user originals |
 | Corrupt session quarantine | Broken session files move to `corrupt-backup` where you can retrieve them — one bad file can't take down the whole web UI |
 | Post-upgrade cleanup | Regenerable caches and surplus old copies are cleaned in idle time after upgrades; at least two healthy predecessors are kept, and modified originals are never touched |
-| Full factory reset | Core data roots are deleted strictly and re-verified; only WebView caches and similar recreatable directories may downgrade persistent errors to warnings |
+| External workspace protection | Thorough reinstall and factory reset are removed; maintenance only detaches private references and retains external files and backups |
 
 ### ④ Device capabilities (the agent's hands on this phone)
 
@@ -187,7 +187,7 @@ The agent calls these through the local `127.0.0.1:3090` bridge (token-gated; `/
 | Capability | Details |
 |---|---|
 | Dual engines | Standard uses the system WebView; Low bundles GeckoView 143, immune to whatever WebView the system ships |
-| Mobile adaptation | Bundles [dsh-web-mobile](https://github.com/mexiaosqwq/dsh-web-mobile) **3.0.5** (MIT), retaining phone shortcuts and narrow-screen layout while fixing focus, dialogs and plugin cards |
+| Mobile adaptation | Bundles [dsh-web-mobile](https://github.com/mexiaosqwq/dsh-web-mobile) **3.1.0** (MIT); fixed source and retained changes are checked by digest |
 | Picture-in-Picture | The conversation window supports a PiP mini window |
 | High refresh & power | Requests the display's peak refresh rate (120 Hz with zero dropped frames measured); hands control back to the system when idle |
 | Themes & languages | Dark / light / follow system; Simplified Chinese / English, following the system language by default |
@@ -246,10 +246,10 @@ Running dsh on Android has two paths, each with real costs — describing them b
 
 | | **Container path** (DSHA's choice) | **Termux bootstrap path** |
 |---|---|---|
-| How | proot/proroot + full glibc rootfs | Termux packages running bare on Android's bionic |
+| How | bxroot/proot + full glibc rootfs | Termux packages running bare on Android's bionic |
 | Setup | Install one APK | Install Termux → type commands → build a toolchain |
 | Environment | Full Ubuntu — `apt` and native modules work | Needs per-package patches / rebuilds for bionic |
-| Overhead | proroot has no ptrace overhead | No container layer; theoretically fastest |
+| Overhead | bxroot Android performance has not been accepted | No container layer; theoretically fastest |
 | Sandboxing | Limited either way | Limited either way |
 
 ---
@@ -285,7 +285,7 @@ Listed honestly, so you don't discover them after installing:
 │  ├ LAN proxy :3081 · ADB / Shizuku / Root channels  │
 │  └ Overlay (TYPE_APPLICATION_OVERLAY)               │
 ├─────────────────────────────────────────────────────┤
-│ proot (default) / proroot (optional, device-specific)│
+│ bxroot (preferred) / proot (compatibility)│
 ├─────────────────────────────────────────────────────┤
 │ Ubuntu 24.04 arm64 · Node.js 24 · pnpm 10           │
 │  └ @deepseek-ai/dsh  →  Web UI :auto                │
@@ -361,7 +361,7 @@ artifact replacement) is documented in [BUILD.md](BUILD.md) and [docs/releases/]
 ## Credits
 
 - [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) — the harness itself
-- [proot](https://github.com/termux/proot) / [proroot](https://github.com/coderredlab/proroot) — rootless containers (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md))
+- [bxroot](https://github.com/qiannianhuanxiang/bxroot) / [proot](https://github.com/termux/proot) — rootless containers (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md))
 - [Termux terminal-view / terminal-emulator](https://github.com/termux/termux-app) (Apache-2.0) — PTY terminal
 - [dsh-web-mobile](https://github.com/mexiaosqwq/dsh-web-mobile) — bundled mobile adaptation
 - [Shizuku](https://shizuku.rikka.app/) — backup device-command channel
@@ -390,4 +390,4 @@ QQ group **975836806** — pre-release builds, feedback, plugin talk.
   </picture>
 </a>
 
-<sub>Regenerated weekly by [`tools/gen-star-history.py`](tools/gen-star-history.py) from GitHub star timestamps ([workflow](.github/workflows/star-history.yml)). Light and dark SVGs are committed to this repo; the curve aggregates stars that are still kept.</sub>
+<sub>Regenerated every 12 hours by [`tools/gen-star-history.py`](tools/gen-star-history.py) from GitHub star timestamps ([workflow](.github/workflows/star-history.yml)). Light and dark SVGs are committed to this repo; the curve aggregates stars that are still kept.</sub>

@@ -61,6 +61,7 @@ public final class PtySession implements TerminalSessionClient {
   private com.deepseekharness.app.core.RuntimeTasks work;
   private volatile boolean maintenanceClosing;
   private boolean prootLauncher;
+  private com.deepseekharness.app.runtime.PtyGuestOwner owned;
   private static final java.util.Set<PtySession> pending =
       java.util.Collections.newSetFromMap(
           new java.util.concurrent.ConcurrentHashMap<PtySession, Boolean>());
@@ -100,7 +101,12 @@ public final class PtySession implements TerminalSessionClient {
       }
       proot.ensureAndroidGroups(); // 登录 shell 的 $(groups) 依赖 /etc/group 里有 Android GID
       ProotBootstrap.PtyLaunch launch = proot.ptyLaunch();
-      String[] argv = launch.argv;
+      try {
+        ps.owned = new com.deepseekharness.app.runtime.PtyGuestOwner(proot.context(), launch.argv);
+      } catch (java.io.IOException failure) {
+        throw new IllegalStateException("PTY_OWNED_PREPARE", failure);
+      }
+      String[] argv = ps.owned.argv;
       ps.prootLauncher = com.deepseekharness.app.util.ProcessIdentity.isProot(argv[0]);
       String[] env = launch.environment;
       // args 就是 argv（含 argv[0]）：查过 termux.c，Java 数组原样转成 argv 后
@@ -111,15 +117,36 @@ public final class PtySession implements TerminalSessionClient {
       com.deepseekharness.app.runtime.NativeProcess.capturePtyIdentity(
           value -> ps.identity = value,
           () -> s.initializeEmulator(Math.max(4, cols), Math.max(2, rows)));
+      try {
+        ps.owned.accept(ps.identity, s::isRunning);
+      } catch (java.io.IOException failure) {
+        ps.owned.uncertain();
+        throw new IllegalStateException("PTY_OWNED_START", failure);
+      }
       return ps;
     } catch (RuntimeException | Error e) {
-      if (ps.session == null || (ps.session.getPid() == 0 && ps.identity == null)) ps.releaseWork();
-      else if (ps.session.getPid() == 0) {
+      if (ps.session == null) {
+        try {
+          if (ps.owned != null) ps.owned.abortBeforeFork();
+          ps.releaseWork();
+        } catch (java.io.IOException unknown) {
+          if (ps.owned != null) ps.owned.uncertain();
+        }
+      } else if (ps.session.getPid() == 0 && ps.identity == null) {
+        try {
+          if (ps.owned != null) ps.owned.stop();
+        } catch (java.io.IOException unknown) {
+          ps.owned.uncertain();
+        }
+      } else if (ps.session.getPid() == 0) {
         // 登记后的 JNI 异常也要确认会话已空；不能仅因 Java 尚未收到 PID 就释放。
         try {
-          com.deepseekharness.app.runtime.TerminalProcessCloser.requireSessionEmpty(
-              ps.identity.pid);
-          ps.releaseWork();
+          if (ps.owned != null) ps.owned.stop();
+          else {
+            com.deepseekharness.app.runtime.TerminalProcessCloser.requireSessionEmpty(
+                ps.identity.pid);
+            ps.releaseWork();
+          }
         } catch (java.io.IOException | RuntimeException uncertain) {
           android.util.Log.w(
               TAG, com.deepseekharness.app.util.UiText.text("终端初始化异常后仍无法确认退出，已保留环境保护"));
@@ -178,7 +205,8 @@ public final class PtySession implements TerminalSessionClient {
               com.deepseekharness.app.util.UiText.text("无法确认终端身份，原环境保持保护"));
         // 启动方式在 fork 前由可信 argv 记录，PID 身份仍用出生握手与当前 stat 双重核验。
         // /proc/PID/exe 在退出及非调试应用 exec 窗口可能不可读，不能把它当成永久维护故障。
-        if (prootLauncher)
+        if (owned != null) owned.stop();
+        else if (prootLauncher)
           com.deepseekharness.app.runtime.TerminalProcessCloser.closeProot(expected);
         else com.deepseekharness.app.runtime.TerminalProcessCloser.close(expected, timeoutMs);
       }
@@ -191,7 +219,8 @@ public final class PtySession implements TerminalSessionClient {
       if (identity == null)
         throw new java.io.IOException(
             com.deepseekharness.app.util.UiText.text("无法确认终端会话身份，原环境保持保护"));
-      com.deepseekharness.app.runtime.TerminalProcessCloser.requireSessionEmpty(identity.pid);
+      if (owned != null) owned.confirmed(session.getExitStatus());
+      else com.deepseekharness.app.runtime.TerminalProcessCloser.requireSessionEmpty(identity.pid);
       releaseWork();
     } catch (java.io.IOException | InterruptedException | RuntimeException error) {
       android.util.Log.w(
@@ -207,6 +236,15 @@ public final class PtySession implements TerminalSessionClient {
     TerminalSession t = session;
     if (t == null || !t.isRunning()) return;
     int pid = t.getPid();
+    if (owned != null) {
+      try {
+        owned.stop();
+        return;
+      } catch (java.io.IOException failure) {
+        owned.uncertain();
+        throw new IllegalStateException("PTY_STOP_UNCONFIRMED", failure);
+      }
+    }
     try {
       com.deepseekharness.app.util.ProcessIdentity expected = identity;
       if (expected == null || !expected.sameProcess(readIdentity(pid)))

@@ -50,7 +50,11 @@ public class AndroidBackupFileSystem implements BackupFileSystem {
     return new IOException(
         error.errno == OsConstants.EACCES || error.errno == OsConstants.EPERM
             ? "PERMISSION_DENIED"
-            : error.errno == OsConstants.ENOSPC ? "NO_SPACE" : "FILESYSTEM_" + error.errno,
+            : error.errno == OsConstants.ENOSPC
+                ? "NO_SPACE"
+                : error.errno == OsConstants.ENOTDIR
+                    ? "SOURCE_NOT_DIRECTORY"
+                    : "FILESYSTEM_" + error.errno,
         error);
   }
 
@@ -149,7 +153,10 @@ public class AndroidBackupFileSystem implements BackupFileSystem {
     if (!expected.type.equals("FILE")) throw new IOException("FILE_TYPE");
     try {
       ParcelFileDescriptor handle =
-          owned(file, OsConstants.O_RDONLY | O_CLOEXEC | OsConstants.O_NOFOLLOW, 0);
+          owned(
+              file,
+              OsConstants.O_RDONLY | O_CLOEXEC | OsConstants.O_NOFOLLOW | OsConstants.O_NONBLOCK,
+              0);
       FileDescriptor fd = handle.getFileDescriptor();
       InputStream stream = new ParcelFileDescriptor.AutoCloseInputStream(handle);
       try {
@@ -188,6 +195,11 @@ public class AndroidBackupFileSystem implements BackupFileSystem {
 
   @Override
   public OutputStream create(File file) throws IOException {
+    return createOwned(file).stream;
+  }
+
+  @Override
+  public CreatedFile createOwned(File file) throws IOException {
     try {
       ParcelFileDescriptor handle =
           owned(
@@ -200,8 +212,10 @@ public class AndroidBackupFileSystem implements BackupFileSystem {
               0600);
       FileDescriptor fd = handle.getFileDescriptor();
       OutputStream stream = new ParcelFileDescriptor.AutoCloseOutputStream(handle);
+      final Node created;
       try {
-        if (!OsConstants.S_ISREG(Os.fstat(fd).st_mode)) throw new IOException("FILE_TYPE");
+        created = node(Os.fstat(fd));
+        if (!created.type.equals("FILE")) throw new IOException("FILE_TYPE");
       } catch (IOException | ErrnoException error) {
         try {
           stream.close();
@@ -210,28 +224,30 @@ public class AndroidBackupFileSystem implements BackupFileSystem {
         }
         throw error;
       }
-      return new FilterOutputStream(stream) {
-        boolean closed;
+      OutputStream output =
+          new FilterOutputStream(stream) {
+            boolean closed;
 
-        @Override
-        public void write(byte[] data, int off, int len) throws IOException {
-          out.write(data, off, len);
-        }
+            @Override
+            public void write(byte[] data, int off, int len) throws IOException {
+              out.write(data, off, len);
+            }
 
-        @Override
-        public void close() throws IOException {
-          if (closed) return;
-          closed = true;
-          try {
-            flush();
-            Os.fsync(fd);
-          } catch (ErrnoException e) {
-            throw failure(e);
-          } finally {
-            super.close();
-          }
-        }
-      };
+            @Override
+            public void close() throws IOException {
+              if (closed) return;
+              closed = true;
+              try {
+                flush();
+                Os.fsync(fd);
+              } catch (ErrnoException e) {
+                throw failure(e);
+              } finally {
+                super.close();
+              }
+            }
+          };
+      return new CreatedFile(output, created);
     } catch (ErrnoException e) {
       throw failure(e);
     }

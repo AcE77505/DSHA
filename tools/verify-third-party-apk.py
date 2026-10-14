@@ -24,9 +24,11 @@ def main():
     if apk.read('assets/licenses/'+name)!=source:raise ValueError('APK_LICENSE_BYTES:'+name)
    if apk.read('assets/builtin-plugins/dsh-web-mobile/LICENSE')!=(ROOT/'app/src/main/assets/builtin-plugins/dsh-web-mobile/LICENSE').read_bytes():raise ValueError('APK_MOBILE_LICENSE_BYTES')
    if apk.read('assets/web-integration/core-js.LICENSE')!=(ROOT/'app/src/main/assets/web-integration/core-js.LICENSE').read_bytes():raise ValueError('APK_CORE_JS_LICENSE_BYTES')
+   for name in gate.EXTRA_ASSETS:
+    if apk.read('assets/'+name)!=(ROOT/'app/src/main/assets'/name).read_bytes():raise ValueError('APK_STATIC_PARSER_BYTES:'+name)
    with apk.open('assets/dsh-runtime.bin') as stream:
     if stream_digest(stream)!=runtime_sha:raise ValueError('APK_THIRD_PARTY_RUNTIME_CHANGED')
-   receipts.append(dict(apk=path.name,sha256=hashlib.sha256(path.read_bytes()).hexdigest(),verifiedLicenses=required,runtimeSha256=runtime_sha))
+   receipts.append(dict(apk=path.name,sha256=hashlib.sha256(path.read_bytes()).hexdigest(),verifiedLicenses=required,verifiedAdditionalAssets=gate.EXTRA_ASSETS,runtimeSha256=runtime_sha))
  packages=gate.inventory(ROOT/'app/src/main/assets/dsh-runtime.bin',
                          json.loads((ROOT/'tools/dsh-runtime/package-lock.json').read_text(encoding='utf-8')),notices)
  report=dict(schema=1,apks=receipts,shippedPackageRecords=packages,note='Actual archive members; declarations are not a legal conclusion or byte-for-byte source reproducibility proof.')

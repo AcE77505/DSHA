@@ -1097,6 +1097,20 @@ def main():
                 return cmd_list('已移除 ' + args[1] + ' 的加载入口；原件保留在数据页的保留区，重启 Web 后生效。')
         if args[0] == "inspect" and len(args) == 2:
             return lifecycle().inspect(args[1])
+        if args[0] == 'capabilities' and len(args) == 2:
+            if not builtin.valid_name(args[1]):
+                raise ValueError('无效的插件名称')
+            with builtin.operation_lock(check_cancel):
+                directory = resolve_plugin_dir(args[1])
+                if not directory:
+                    raise ValueError('找不到插件实体')
+                package = read_json(os.path.join(directory, 'package.json'))
+                current = dependencies().current(directory)
+                report = lifecycle().capabilities(directory, package, current['sha256'])
+                if dependencies().current(directory)['sha256'] != current['sha256']:
+                    raise ValueError('插件在静态检查期间变化，请重新检查')
+                result('ok', '静态能力检查完成', capabilities=report)
+                return 0
         if args[0] == "install-preview" and len(args) == 3:
             return lifecycle().install_preview(args[1], args[2])
         if args[0] == "show-preview" and len(args) == 2:

@@ -36,6 +36,7 @@ public class ProotBootstrap {
   private final RecoveryToolchain recovery;
   final ColdInstallTransaction.Candidate coldCandidate;
   ColdRuntimeSelection preparedColdRuntime;
+  private volatile String actualRuntimeMode = "UNKNOWN";
 
   public ProotBootstrap(Context c) {
     this(c, false);
@@ -77,7 +78,22 @@ public class ProotBootstrap {
             ctx, rootfsDir, baseDir, libDir, tmpDir, nativeFiles, launcher, hostPorts);
     pluginScripts =
         new GuestPluginScripts(
-            ctx, rootfsDir, this::isEnvironmentReady, this::execAndReadWithProotResult);
+            ctx,
+            rootfsDir,
+            this::isEnvironmentReady,
+            (command, timeout) -> execution.collect(command, timeout, false));
+  }
+
+  public Context context() {
+    return ctx;
+  }
+
+  public String actualRuntimeMode() {
+    return actualRuntimeMode;
+  }
+
+  public void recordActualWebRuntime(Process process) {
+    actualRuntimeMode = OwnedGuestProof.modeOf(process);
   }
 
   public RuntimeHostPorts hostPorts() {
@@ -255,6 +271,10 @@ public class ProotBootstrap {
 
   public ContainerRuntime runtime() {
     return execution.runtime();
+  }
+
+  ContainerRuntime packageRuntime() throws IOException {
+    return execution.packageRuntime();
   }
 
   public void prepareRuntimeTools() throws IOException {

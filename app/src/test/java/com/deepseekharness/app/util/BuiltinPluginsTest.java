@@ -40,6 +40,17 @@ public class BuiltinPluginsTest {
   }
 
   @Test
+  public void everySignedEntityHasExactlyOneManagedSwitchRoot() {
+    var paths = ManagedRuntimeLayout.paths();
+    for (String name : BuiltinPlugins.SIGNED_BUILTINS) {
+      String path = BuiltinPlugins.entityDir(name).substring(1);
+      assertEquals(name, 1, paths.stream().filter(path::equals).count());
+      assertTrue(name, ManagedRuntimeLayout.allowed(ManagedRuntimeLayout.ROOT + path));
+    }
+    assertEquals(paths.size(), new java.util.HashSet<>(paths).size());
+  }
+
+  @Test
   public void parseBuiltinNames_逐行解析_跳过空行与注释() {
     String txt =
         "# 内置插件\n\ndsh-device-shell-guide\n  dsh-task-notifier  \n\n# 注释行\ndsh-status-overlay\ndsh-web-mobile\n";

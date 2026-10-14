@@ -38,3 +38,5 @@ tools/history/** -text -eol
 # The configured Ubuntu proof and layout retain the exact signed build170 bytes.
 app/src/main/assets/ubuntu-tools.manifest.json -text -eol
 app/src/main/assets/ubuntu-tools.layout -text -eol
+# The signed native proof hashes this lock's exact original bytes.
+tools/bxroot/lock.json -text -eol

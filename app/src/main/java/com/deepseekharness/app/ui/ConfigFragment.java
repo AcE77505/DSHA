@@ -92,7 +92,8 @@ public class ConfigFragment extends Fragment {
     renderPictureInPictureStatus();
     CompoundButton staticLoader = v.findViewById(R.id.config_static_loader),
         noSeccomp = v.findViewById(R.id.config_no_seccomp);
-    staticLoader.setChecked(c.isProrootStaticLoader());
+    staticLoader.setChecked(false);
+    staticLoader.setVisibility(android.view.View.GONE);
     noSeccomp.setChecked(c.isProotSeccompDisabled());
     CompoundButton proroot = v.findViewById(R.id.config_proroot);
     CompoundButton lan = v.findViewById(R.id.config_lan_mode);
@@ -215,7 +216,7 @@ public class ConfigFragment extends Fragment {
         v,
         R.id.config_runtime_choice,
         com.deepseekharness.app.util.UiText.choose("运行方式", "Runtime"),
-        new String[] {"proroot", "proot"},
+        new String[] {"bxroot", "proot"},
         c.isProroot() ? 0 : 1,
         index -> proroot.setChecked(index == 0));
     bindChoice(

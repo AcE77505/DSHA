@@ -4,6 +4,7 @@ import base64
 import concurrent.futures
 import functools
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -148,6 +149,15 @@ class Lifecycle:
     def metadata(self, root):
         return self.package_metadata(self.g['plugin_package'](root))
 
+    def capabilities(self, root, package, candidate_sha='', snapshot=None):
+        spec = importlib.util.spec_from_file_location('plugin_capabilities', os.path.join(os.path.dirname(__file__), 'plugin-capabilities.py'))
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        snapshot = snapshot or {}
+        report = module.analyze(root, package, candidate_sha=candidate_sha,
+                                lock_sha=snapshot.get('lockSha256', ''), resolved=snapshot.get('resolved', []))
+        report['runtimeDsh'] = self.dsh_version()
+        return report
+
     def package_metadata(self, pkg):
         author = pkg.get('author', '')
         if isinstance(author, dict):
@@ -245,6 +255,7 @@ class Lifecycle:
                 item['dependencyCount'] = len(snapshot.get('resolved', []))
                 item['dependencyLockSha256'] = snapshot.get('lockSha256', '')
                 item['packageManagerVersion'] = snapshot.get('managerVersion', 'not-executed')
+                item['capabilities'] = self.capabilities(plugin_root, self.g['plugin_package'](plugin_root), snapshot.get('treeSha256', ''), snapshot)
                 if snapshot.get('authorClaims'):
                     item['authorDependencyClaims'] = snapshot['authorClaims']
                 reviewed.append({'path': os.path.relpath(plugin_root, path).replace(os.sep, '/'),
@@ -331,6 +342,7 @@ class Lifecycle:
             item['dependencyState'] = 'modified-original'
         resolved = [{'name': row['name'], 'version': row['version']} for row in current['nodes'].values()]
         item.update(resolvedDependencies=resolved[:50], dependencyCount=len(resolved), missingDependencies=current['missing'])
+        item['capabilities'] = self.capabilities(directory, self.g['plugin_package'](directory), current['sha256'])
         self.prune_previews(); key = uuid.uuid4().hex; path = self.preview_path(key); os.makedirs(path)
         source = self.read(self.g['local'](self.g['SOURCES']), {}).get(name, '')
         preview = {'previewId': key, 'action': action, 'name': name, 'items': [item], 'sha256': current['sha256'],

@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 from recovery_apk_assets import archive_locations
 from recovery_runtime_overlay import TARGETS as BROWSER_TARGETS, INPUT_ASSETS
+from native_runtime_proof import recovery_launcher_hashes, infer_flavor
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -52,7 +53,8 @@ def verify(path):
             require((hash_entry(apk,'assets/'+name)==sha), 'RECOVERY_PROFILE')
         verify_overlays(apk,descriptor)
         verify_overlay_inputs(apk,descriptor)
-        flavor='low' if 'lib/arm64-v8a/libproot_legacy.so' in apk.namelist() else 'standard'
+        flavor=infer_flavor(apk)
+        require(descriptor['launcherHashes']==recovery_launcher_hashes(ROOT), 'RECOVERY_CURRENT_LAUNCHER_PROOF')
         for name,sha in descriptor['launcherHashes'][flavor].items():
             require((hash_entry(apk,'lib/arm64-v8a/'+name)==sha), 'RECOVERY_LAUNCHER')
         for name in ('recovery-web-integration/manifest.json',

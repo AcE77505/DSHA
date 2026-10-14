@@ -62,6 +62,21 @@ public class RuntimeLauncherTest {
   }
 
   @Test
+  public void preparationFailureCompletesTheBoundRecordBeforeAnySpawn() throws Exception {
+    File root = temporary.newFolder();
+    var fs = new com.deepseekharness.app.backup.JvmBackupFileSystem();
+    var record = BoundedGuestSessions.begin(fs, root);
+    record.retainCompletion();
+    var launcher = new RuntimeLauncher(null, root, root, root, root, new RuntimeHostPorts());
+    LaunchSpec spec = LaunchSpec.runtime(fake()).isolated(true).record(record).build();
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> launcher.start("unused", spec));
+    assertEquals("RUNTIME_PROVIDER_UNAVAILABLE", failure.getMessage());
+    assertTrue(BoundedGuestSessions.recordedCompletion(fs, root, record.id()));
+    assertNull(BoundedGuestSessions.firstPending(fs, root));
+  }
+
+  @Test
   public void secretsStayInEnvironmentAndSpecDiagnosticsContainOnlyKeys() throws Exception {
     File root = temporary.newFolder();
     var launcher = new RuntimeLauncher(null, root, root, root, root, ports);

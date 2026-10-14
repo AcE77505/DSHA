@@ -427,9 +427,10 @@ public class TarGzipExtractorTest {
     }
 
     @Override
-    public CreatedFile createWithMode(File file, int mode) throws IOException {
+    public TrustedAssetFileSystem.CreatedFile createWithMode(File file, int mode)
+        throws IOException {
       OutputStream opened = super.create(file);
-      return new CreatedFile(opened, stat(file)) {
+      return new TrustedAssetFileSystem.CreatedFile(opened, stat(file)) {
         @Override
         public void close() throws IOException {
           super.close();
@@ -473,12 +474,12 @@ public class TarGzipExtractorTest {
     }
 
     @Override
-    public CreatedFile prepareSmallFile(File file, byte[] bytes, int count, int mode)
-        throws IOException {
+    public TrustedAssetFileSystem.CreatedFile prepareSmallFile(
+        File file, byte[] bytes, int count, int mode) throws IOException {
       prepared.add(file.getName());
-      CreatedFile opened = super.createWithMode(file, mode);
+      TrustedAssetFileSystem.CreatedFile opened = super.createWithMode(file, mode);
       opened.write(bytes, 0, count);
-      return new CreatedFile(opened, opened.identity) {
+      return new TrustedAssetFileSystem.CreatedFile(opened, opened.identity) {
         @Override
         public void close() throws IOException {
           super.close();
@@ -563,8 +564,8 @@ public class TarGzipExtractorTest {
     SmallFs raced =
         new SmallFs(root) {
           @Override
-          public CreatedFile prepareSmallFile(File file, byte[] bytes, int count, int mode)
-              throws IOException {
+          public TrustedAssetFileSystem.CreatedFile prepareSmallFile(
+              File file, byte[] bytes, int count, int mode) throws IOException {
             Files.writeString(file.toPath(), "racing owner");
             throw new IOException("INJECTED_EXCLUSIVE_CREATE_RACE");
           }
@@ -639,8 +640,9 @@ public class TarGzipExtractorTest {
           }
 
           @Override
-          public CreatedFile createWithMode(File file, int mode) throws IOException {
-            CreatedFile opened = super.createWithMode(file, mode);
+          public TrustedAssetFileSystem.CreatedFile createWithMode(File file, int mode)
+              throws IOException {
+            TrustedAssetFileSystem.CreatedFile opened = super.createWithMode(file, mode);
             Files.move(file.toPath(), new File(root, "owned-retained").toPath());
             Files.writeString(file.toPath(), "replacement");
             generation++;

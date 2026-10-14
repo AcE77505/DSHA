@@ -31,8 +31,19 @@ public final class InstallPipeline {
 
     void repairPatches() throws Exception;
 
+    default void probeEvidence(String evidence) {}
+
+    default AutoCloseable runtimeScope() throws Exception {
+      return () -> {};
+    }
+
     int execute(
-        String script, long timeout, boolean cancellable, InstallTask task, Consumer<String> output)
+        String script,
+        long timeout,
+        boolean cancellable,
+        InstallTask task,
+        Consumer<String> output,
+        Runnable beforeCleanup)
         throws Exception;
   }
 
@@ -47,6 +58,12 @@ public final class InstallPipeline {
   }
 
   public void run(InstallTask task, boolean repair, int selected) throws Exception {
+    try (AutoCloseable scope = environment.runtimeScope()) {
+      runScoped(task, repair, selected);
+    }
+  }
+
+  private void runScoped(InstallTask task, boolean repair, int selected) throws Exception {
     task.stage(
         ENVIRONMENT_ID,
         com.deepseekharness.app.util.UiText.text("检查第 1 步：Linux 解压标记、版本与 bash"),
@@ -171,7 +188,8 @@ public final class InstallPipeline {
 
   private InstallProbe.Results probe(InstallTask task, int selected) throws Exception {
     List<InstallProbe.Check> checks = InstallProbe.checks(selected);
-    InstallProbe.Results result = new InstallProbe.Results(checks);
+    InstallProbe.Plan plan = InstallProbe.plan(checks);
+    InstallProbe.Results result = new InstallProbe.Results(plan);
     task.stage(
         selected == 0 ? TOOLS_ID : selected,
         com.deepseekharness.app.util.UiText.text("启动一次容器探测，逐项检查实际运行结果"),
@@ -181,8 +199,8 @@ public final class InstallPipeline {
     try {
       code =
           environment.execute(
-              InstallProbe.script(checks),
-              Math.max(30_000, checks.size() * 22_000L),
+              plan.script,
+              plan.outerTimeoutMs,
               true,
               task,
               line -> {
@@ -206,8 +224,11 @@ public final class InstallPipeline {
                                 "%s：失败（退出码 %s）",
                                 active[0].label, line.substring(line.lastIndexOf(':') + 1)));
                 } else task.append(line);
-              });
+              },
+              () -> environment.probeEvidence(result.diagnostic() + "\n" + task.snapshot().log));
     } finally {
+      task.append(result.diagnostic());
+      environment.probeEvidence(result.diagnostic() + "\n" + task.snapshot().log);
       // 进程提前退出、没有 BEGIN 或漏结果时，也要为每个选中组件发布结论。
       // 取消保留已完成结果，剩余步骤由 finish 标为未完成。
       if (!task.cancellationRequested())
@@ -231,6 +252,7 @@ public final class InstallPipeline {
     private final Context context;
     private final ProotBootstrap proot;
     private final BasicToolsInstaller tools;
+    private String probeMode = "UNKNOWN";
 
     LocalEnvironment(Context context) {
       this.context = context;
@@ -278,16 +300,37 @@ public final class InstallPipeline {
     }
 
     @Override
+    public void probeEvidence(String evidence) {
+      evidence = "actualMode=" + probeMode + "\n" + evidence;
+      com.deepseekharness.app.core.InstallProbeDiagnostics.record(context, evidence);
+      com.deepseekharness.app.core.DiagnosticLog.record(context, "INSTALL_PROBE", evidence);
+    }
+
+    @Override
+    public AutoCloseable runtimeScope() {
+      return proot.hostPorts().open();
+    }
+
+    @Override
     public int execute(
-        String script, long timeout, boolean cancellable, InstallTask task, Consumer<String> output)
+        String script,
+        long timeout,
+        boolean cancellable,
+        InstallTask task,
+        Consumer<String> output,
+        Runnable beforeCleanup)
         throws Exception {
+      probeMode = "UNKNOWN";
+      Process process = proot.execRootfsForInstall(script);
+      probeMode = com.deepseekharness.app.runtime.OwnedGuestProof.modeOf(process);
       return InstallProcess.read(
-          proot.execRootfsForInstall(script),
+          process,
           timeout,
           cancellable,
           task::cancellationRequested,
           output,
-          Compat::destroy);
+          Compat::destroy,
+          beforeCleanup);
     }
   }
 }

@@ -80,6 +80,11 @@ public final class NativePluginGraph {
       for (String profile : fs.list(profileRoot)) {
         BackupLimits.path(profile);
         if (profile.contains("/") || profile.length() > 128) throw new IOException("PROFILE_NAME");
+        File profileDirectory = resolver.resolve(new File(profileRoot, profile)).file;
+        if (!fs.stat(profileDirectory).type.equals("DIRECTORY")) {
+          warnings.add("PROFILE_DIRECTORY_TYPE");
+          continue;
+        }
         File packageFile = new File(profileRoot, profile + "/package.json");
         if (!fs.stat(packageFile).type.equals("FILE")) continue;
         Map<String, Object> metadata;
@@ -182,6 +187,7 @@ public final class NativePluginGraph {
         Arrays.asList(new File(owner, "node_modules"), new File(dsh, "node_modules"), global)) {
       File candidate = new File(base, name);
       GuestDataResolver.Resolved resolved = resolver.resolve(candidate);
+      if (!fs.stat(resolved.file).type.equals("DIRECTORY")) continue;
       if (fs.stat(new File(resolved.file, "package.json")).type.equals("FILE")) {
         aliases.put(candidate.getAbsolutePath(), resolved.proof);
         return candidate;

@@ -89,12 +89,18 @@ public final class WebProcSel {
     // 只接受已知的 Node + dsh web 参数序列，不能因命令中带有 bridge 名称就放行。
     String[] argv =
         cmdline.indexOf('\0') >= 0 ? cmdline.split("\u0000") : cmdline.trim().split("\\s+");
+    if (argv.length > 0 && basename(argv[0]).equals("libbxroot-ulx.so")) {
+      String[] logical = ulxArguments(argv);
+      return logical != null && looksLikeWeb(String.join("\u0000", logical));
+    }
     if (argv.length > 0 && basename(argv[0]).equals("libproroot-bridge.so"))
       return isProrootWebPayload(argv) || isProrootManagedWebShell(argv);
     if (argv.length == 0) return false;
     String executable = basename(argv[0]);
     if (executable.equals("libproot.so")
         || executable.startsWith("libproroot")
+        || executable.startsWith("libbxroot")
+        || executable.equals("libdsha-session.so")
         || executable.equals("proot")) return false;
     if (maySignalWeb(cmdline)) return true;
     // Exact executable script positions only; grep/vim/echo and shell -c text are not processes we
@@ -171,6 +177,10 @@ public final class WebProcSel {
     if (cmdline == null || cmdline.isEmpty()) return false;
     String[] args =
         cmdline.indexOf('\0') >= 0 ? cmdline.split("\u0000") : cmdline.trim().split("\\s+");
+    if (args.length > 0 && basename(args[0]).equals("libbxroot-ulx.so")) {
+      String[] logical = ulxArguments(args);
+      return logical != null && maySignalWeb(String.join("\u0000", logical));
+    }
     if (args.length > 0 && basename(args[0]).equals("libproroot-bridge.so"))
       return isProrootWebPayload(args);
     if (args.length < 3 || !isNode(args[0])) return false;
@@ -186,6 +196,10 @@ public final class WebProcSel {
     if (cmdline == null || cmdline.isEmpty()) return "";
     String[] args =
         cmdline.indexOf('\0') >= 0 ? cmdline.split("\u0000") : cmdline.trim().split("\\s+");
+    if (args.length > 0 && basename(args[0]).equals("libbxroot-ulx.so")) {
+      String[] logical = ulxArguments(args);
+      return logical == null ? "" : trialProfile(String.join("\u0000", logical));
+    }
     int argument;
     if (args.length > 0 && basename(args[0]).equals("libproroot-bridge.so")) {
       if (!isProrootWebPayload(args)) return "";
@@ -203,6 +217,35 @@ public final class WebProcSel {
     if (argument + 1 >= args.length || !args[argument].equals("--profile")) return "";
     String profile = args[argument + 1];
     return profile.matches("dsha-recovery-[0-9a-f]{16}") ? profile : "";
+  }
+
+  /** 仅当前独立 ULX 真实加载链；不把旧占位 bridge/linker 当作 bxroot。 */
+  private static String[] ulxArguments(String[] argv) {
+    if (argv.length < 8
+        || !argv[1].endsWith("/ld-linux-aarch64.so.1")
+        || !argv[2].equals("--argv0")
+        || !argv[4].equals("--preload")
+        || !basename(argv[5]).equals("libbxroot-runtime.so")) return null;
+    boolean node = isNode(argv[3]) && isManagedNode(argv[6]);
+    boolean shell =
+        (basename(argv[3]).equals("bash") || basename(argv[3]).equals("sh"))
+            && (argv[6].endsWith("/bin/bash") || argv[6].endsWith("/bin/sh"));
+    if (!node && !shell) return null;
+    String[] logical = new String[argv.length - 6];
+    logical[0] = argv[3];
+    System.arraycopy(argv, 7, logical, 1, argv.length - 7);
+    return logical;
+  }
+
+  public static String[] logicalArguments(String command) {
+    if (command == null) return new String[0];
+    String[] args =
+        command.indexOf('\0') >= 0 ? command.split("\u0000") : command.trim().split("\\s+");
+    if (args.length > 0 && basename(args[0]).equals("libbxroot-ulx.so")) {
+      String[] logical = ulxArguments(args);
+      return logical == null ? new String[0] : logical;
+    }
+    return args;
   }
 
   private static boolean webArguments(String[] args, int index) {

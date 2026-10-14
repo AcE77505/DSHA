@@ -106,18 +106,6 @@ public class KeyVault {
     }
   }
 
-  /** 格式化时移除本应用的凭据密钥；密文偏好会由调用方独立同步清空。 */
-  public boolean clearForFactoryReset() {
-    try {
-      KeyStore store = KeyStore.getInstance(KEYSTORE);
-      store.load(null);
-      if (store.containsAlias(ALIAS)) store.deleteEntry(ALIAS);
-      return !store.containsAlias(ALIAS);
-    } catch (Exception unavailable) {
-      return false;
-    }
-  }
-
   static CredentialRead classify(Throwable error) {
     // 仅按平台明确分类细分；认证失败不等于“密文损坏”。不保留含供应商细节的原异常。
     java.util.Set<Throwable> seen =

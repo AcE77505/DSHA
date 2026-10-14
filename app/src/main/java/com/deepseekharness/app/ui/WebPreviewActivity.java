@@ -76,14 +76,15 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
   private WebViewMicrophone microphoneRequests;
   private boolean browserResumed;
   private PreviewPageSession.Identity restoreIdentity;
+  private PreviewPageSession.Identity obsoleteHostIdentity;
+  private boolean emptyHostRetirementPending;
   private PreviewPageSession.Identity pendingIdentity;
   private PreviewPageSession.Identity startupIdentity;
   private final Runnable runtimeChanged =
       () ->
           runOnUiThread(
               () -> {
-                if (browserResumed || pictureInPictureActiveOrTransitioning())
-                  synchronizeWebSession();
+                synchronizeWebSession();
               });
 
   private static final class PendingUpload {
@@ -137,6 +138,9 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
     String scriptLanguage;
     com.deepseekharness.app.util.StartupPageGate pageEvents;
     long pageNavigation;
+    com.deepseekharness.app.util.BrowserThemeGate themeGate;
+    Integer themeColor;
+    String routeRequestSent;
     WebBlobDownload blobDownload;
     PendingUpload pendingUpload;
     // 页面取消后仍等待旧系统结果排空，不能把它交给新页面的上传请求。
@@ -291,9 +295,8 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
   }
 
   public static Intent intent(Context ctx, String url, String cookie) {
-    return new Intent(ctx, WebPreviewActivity.class)
-        .putExtra(EXTRA_URL, url)
-        .putExtra(EXTRA_COOKIE, cookie);
+    return BrowserConversationRoute.conversation(ctx, url, cookie)
+        .putExtra(BrowserConversationRoute.MODE, "FULL");
   }
 
   @Override
@@ -303,6 +306,12 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
     microphone = new BrowserMicrophone(this);
     retained = new androidx.lifecycle.ViewModelProvider(this).get(Retained.class);
     retained.owner = new java.lang.ref.WeakReference<>(this);
+    emptyHostRetirementPending =
+        savedInstanceState != null
+            && savedInstanceState.getBoolean("browser-retire-empty-host", false)
+            && retained.view == null
+            && retained.pageSession.identity() == null;
+    BrowserConversationRoute.register(this);
     previewAuth = new PreviewAuth(this);
     downloads = new WebDownloads(this, savedInstanceState);
     restoreState =
@@ -316,6 +325,12 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
     errorTitle = findViewById(R.id.web_error_title);
     errorDetail = findViewById(R.id.web_error_detail);
     progress = findViewById(R.id.web_progress);
+    com.deepseekharness.app.core.HarnessController.get(this)
+        .addReadyWebPageListener(runtimeChanged);
+    PreviewPageSession.Identity initial = currentWebIdentity();
+    if ((!emptyHostRetirementPending || initial == null) && retireEmptyHost(null, initial, false))
+      return;
+    if (retained.themeColor != null) WebFullscreenUi.applyThemeColor(this, retained.themeColor);
     findViewById(R.id.web_retry).setOnClickListener(v -> loadSession());
     findViewById(R.id.web_error_browser).setOnClickListener(v -> openExternal(authUrl));
     findViewById(R.id.web_error_logs)
@@ -338,10 +353,25 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
                 navigateBack();
               }
             });
+    if (!BrowserConversationRoute.current(getIntent(), currentWebIdentity())) {
+      rejectConversationRoute();
+      return;
+    }
     authUrl = getIntent().getStringExtra(EXTRA_URL);
     authCookie = getIntent().getStringExtra(EXTRA_COOKIE);
     PreviewPageSession.Identity current = currentWebIdentity();
     PreviewPageSession.Identity retainedIdentity = retained.pageSession.identity();
+    if (emptyHostRetirementPending && retainedIdentity == null && retained.view == null) return;
+    PreviewPageSession.Identity previous =
+        retainedIdentity != null
+            ? retainedIdentity
+            : retained.view == null ? restoreIdentity : null;
+    if (previous != null && !previous.equals(current)) {
+      obsoleteHostIdentity = previous;
+      webView = retained.view;
+      // Resume decides whether this obsolete host may hand a visible FULL request to a new task.
+      return;
+    }
     if (current != null) {
       if (!current.authUrl().equals(authUrl)) authCookie = null;
       authUrl = current.authUrl();
@@ -379,7 +409,7 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
         webView = retained.view;
         destroyWebView();
       }
-      loadSession();
+      if (!conversationHidden()) loadSession();
     }
     if (retained.pendingPicker != null) {
       try {
@@ -397,7 +427,11 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
   }
 
   private void loadSession(boolean allowAuthRetry) {
-    if (isFinishing() || isDestroyed() || previewAuth == null) return;
+    if (isFinishing() || isDestroyed() || previewAuth == null || conversationHidden()) return;
+    if (obsoleteHostIdentity != null || emptyHostRetirementPending) {
+      synchronizeWebSession();
+      return;
+    }
     PreviewPageSession.Identity expected = currentWebIdentity();
     if (expected == null) {
       cancelPendingAuthentication();
@@ -421,7 +455,9 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
     progress.setVisibility(View.VISIBLE);
     previewAuth.refresh(
         (url, cookie, error) -> {
-          if (!expected.equals(pendingIdentity) || !expected.equals(currentWebIdentity())) return;
+          if (conversationHidden()
+              || !expected.equals(pendingIdentity)
+              || !expected.equals(currentWebIdentity())) return;
           pendingIdentity = null;
           if (error != null) {
             showError(com.deepseekharness.app.util.UiText.text("暂时无法进入对话"), error);
@@ -446,10 +482,49 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
     if (previewAuth != null) previewAuth.cancel();
   }
 
+  @Override
+  protected void cancelConversationRequests() {
+    cancelPendingAuthentication();
+    if (retained != null) retained.routeRequestSent = null;
+    if (webView != null && retained != null && isCurrentPage(webView))
+      webView.evaluateJavascript("window.__dshaNativePresentation?.cancel();", null);
+    if (getIntent() != null) {
+      getIntent().removeExtra(BrowserConversationRoute.REQUEST);
+      getIntent().removeExtra(BrowserConversationRoute.SESSION);
+    }
+  }
+
   /** 单 task 再进入与就绪通知共用同一门禁，不按 URL 或切前台次数猜测需要刷新。 */
   private boolean synchronizeWebSession() {
-    if (retained == null || previewAuth == null || isFinishing() || isDestroyed()) return false;
+    return synchronizeWebSession(false);
+  }
+
+  private boolean synchronizeWebSession(boolean explicitFullEntry) {
+    if (retained == null
+        || retained.owner.get() != this
+        || previewAuth == null
+        || isFinishing()
+        || isDestroyed()) return false;
     PreviewPageSession.Identity current = currentWebIdentity();
+    PreviewPageSession.Identity obsolete = retained.pageSession.identity();
+    if (obsolete != null && obsolete.equals(current)) {
+      obsoleteHostIdentity = null;
+      emptyHostRetirementPending = false;
+    }
+    if (obsolete == null) obsolete = obsoleteHostIdentity;
+    if (obsolete == null && webView == null && retained.view == null) obsolete = restoreIdentity;
+    if (emptyHostRetirementPending || obsolete != null && !obsolete.equals(current)) {
+      obsoleteHostIdentity = obsolete;
+      cancelPendingAuthentication();
+      restoreState = null;
+      restoreIdentity = null;
+      destroyWebView();
+      retireEmptyHost(obsolete, current, explicitFullEntry);
+      // A refused/non-root retirement must not fall through and create a page in this old task.
+      return true;
+    }
+    if (obsoleteHostIdentity != null && obsoleteHostIdentity.equals(current))
+      obsoleteHostIdentity = null;
     if (current == null) {
       cancelPendingAuthentication();
       cancelFileSelection();
@@ -457,11 +532,88 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
       retained.pendingHistory = null;
       restoreState = null;
       restoreIdentity = null;
+      retireEmptyHost(null, current, false);
       return false;
     }
-    if (webView != null && retained.pageSession.isCurrent(current)) return false;
+    if (conversationHidden()) return false;
+    if (webView != null && retained.pageSession.isCurrent(current)) {
+      dispatchConversationRoute();
+      return false;
+    }
     if (current.equals(pendingIdentity)) return true;
     loadSession();
+    return true;
+  }
+
+  /** An obsolete PiP task can retain its system surface scale after its page is gone. */
+  private boolean retireEmptyHost(
+      PreviewPageSession.Identity obsolete,
+      PreviewPageSession.Identity current,
+      boolean explicitFullEntry) {
+    if (retained == null
+        || retained.owner.get() != this
+        || isFinishing()
+        || isDestroyed()
+        || webView != null
+        || retained.view != null
+        || retained.pageSession.identity() != null
+        || pendingIdentity != null
+        || previewAuth == null
+        || previewAuth.busy()) return false;
+    var controller = com.deepseekharness.app.core.HarnessController.get(this);
+    boolean endedGeneration =
+        obsolete != null && obsolete.generation() < controller.getWebGeneration();
+    boolean newReady =
+        current != null
+            && (emptyHostRetirementPending || obsolete != null && !obsolete.equals(current));
+    if ((!controller.isStopping() && !controller.isUserStopped() && !endedGeneration && !newReady)
+        || !java.util.Objects.equals(current, controller.getReadyWebPageIdentity())) return false;
+    emptyHostRetirementPending = true;
+    if (!isTaskRoot()) return false;
+    Intent handoff = null;
+    Intent original = getIntent();
+    boolean fullRequest =
+        explicitFullEntry
+            && original != null
+            && "FULL".equals(original.getStringExtra(BrowserConversationRoute.MODE))
+            && BrowserConversationRoute.current(original, current);
+    if (newReady && (fullRequest || browserResumed && !conversationHidden())) {
+      handoff =
+          new Intent(this, getClass())
+              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+              .putExtra(BrowserConversationRoute.MODE, "FULL")
+              .putExtra(EXTRA_URL, current.authUrl())
+              .putExtra(EXTRA_COOKIE, (String) null)
+              .putExtra(BrowserConversationRoute.GENERATION, current.generation())
+              .putExtra(BrowserConversationRoute.INSTANCE, current.instanceId());
+      if (original != null
+          && original.getLongExtra(BrowserConversationRoute.GENERATION, -1) == current.generation()
+          && current
+              .instanceId()
+              .equals(original.getStringExtra(BrowserConversationRoute.INSTANCE)))
+        for (String key :
+            new String[] {BrowserConversationRoute.SESSION, BrowserConversationRoute.REQUEST})
+          if (original.hasExtra(key)) handoff.putExtra(key, original.getStringExtra(key));
+    }
+    // Only retire this empty UI host; the existing runtime stop barrier owns process cleanup.
+    try {
+      finishAndRemoveTask();
+    } catch (RuntimeException failure) {
+      android.util.Log.w(
+          "DSHA", "BROWSER_HOST_RETIRE_FAILED: " + failure.getClass().getSimpleName());
+      return false;
+    }
+    if (!isFinishing()) return false;
+    obsoleteHostIdentity = null;
+    emptyHostRetirementPending = false;
+    if (handoff != null && current.equals(currentWebIdentity())) {
+      try {
+        startActivity(handoff);
+      } catch (RuntimeException failure) {
+        android.util.Log.w(
+            "DSHA", "BROWSER_HOST_HANDOFF_FAILED: " + failure.getClass().getSimpleName());
+      }
+    }
     return true;
   }
 
@@ -501,6 +653,7 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
       retained.view = view;
       retained.authUrl = authUrl;
       retained.pageSession.claim(identity);
+      BrowserConversationRoute.register(this);
       retained.needsStreamResume = false;
       retained.pendingHistory = restoreState;
       restoreState = null;
@@ -571,6 +724,7 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
 
   private void continueInitialNavigation() {
     if (isFinishing()
+        || conversationHidden()
         || isDestroyed()
         || retained.owner.get() != this
         || webView == null
@@ -589,6 +743,9 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
     if (retained.pageEvents == null || !retained.pageEvents.owns(view))
       retained.pageEvents =
           new com.deepseekharness.app.util.StartupPageGate(view, startupGeneration, baseUrl);
+    if (retained.themeGate == null || !retained.themeGate.owns(view))
+      retained.themeGate =
+          new com.deepseekharness.app.util.BrowserThemeGate(view, retained.pageSession.identity());
     if (microphoneRequests != null) microphoneRequests.cancel();
     microphoneRequests =
         new WebViewMicrophone(
@@ -631,6 +788,21 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
               if (com.deepseekharness.app.util.UiLanguagePreference.EN.equals(language)
                   || com.deepseekharness.app.util.UiLanguagePreference.ZH.equals(language))
                 LanguageController.select(this, language);
+            } catch (IllegalStateException ignored) {
+            }
+          });
+      androidx.webkit.WebViewCompat.removeWebMessageListener(view, "DshaTheme");
+      androidx.webkit.WebViewCompat.addWebMessageListener(
+          view,
+          "DshaTheme",
+          java.util.Collections.singleton(baseUrl.substring(0, baseUrl.length() - 1)),
+          (source, message, origin, mainFrame, reply) -> {
+            if (!isCurrentPage(source)
+                || !mainFrame
+                || !WebPreviewPolicy.sameService(baseUrl, origin.toString())
+                || !WebPreviewPolicy.sameService(baseUrl, source.getUrl())) return;
+            try {
+              receivePresentation(source, message.getData(), mainFrame, source.getUrl());
             } catch (IllegalStateException ignored) {
             }
           });
@@ -691,6 +863,9 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
     public void onPageStarted(WebView view, String url, Bitmap favicon) {
       if (!isCurrentPage(view)) return;
       retained.pageNavigation++;
+      retained.themeGate =
+          new com.deepseekharness.app.util.BrowserThemeGate(view, retained.pageSession.identity());
+      retained.routeRequestSent = null;
       if (retained.blobDownload != null) {
         retained.blobDownload.close();
         retained.blobDownload = null;
@@ -713,6 +888,13 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
       progress.setVisibility(View.GONE);
       if (!WebPreviewPolicy.sameService(baseUrl, url)) return;
       retained.ready = true;
+      final var theme = retained.themeGate;
+      if (theme != null)
+        view.evaluateJavascript(
+            WebPageScripts.presentation(WebPreviewActivity.this, theme),
+            ignored -> {
+              if (isCurrentPage(view) && retained.themeGate == theme) dispatchConversationRoute();
+            });
       refreshPictureInPicture();
       resumePageStreams();
       // 新内核已经在文档起始执行兼容脚本；这里只做轻量能力核验，避免每次页面完成
@@ -990,7 +1172,7 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
         || current == null
         || !isCurrentPage(current)
         || !WebPreviewPolicy.sameService(baseUrl, current.getUrl())) {
-      finish();
+      hideConversation();
       return;
     }
     navigatingBack = true;
@@ -1023,6 +1205,7 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
   }
 
   private void destroyWebView() {
+    WebFullscreenUi.applyThemeColor(this, getColor(R.color.surface));
     if (microphoneRequests != null) {
       microphoneRequests.cancel();
       microphoneRequests = null;
@@ -1038,6 +1221,9 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
       retained.needsStreamResume = false;
       retained.pageSession.clear();
       retained.pageEvents = null;
+      retained.themeGate = null;
+      retained.themeColor = null;
+      retained.routeRequestSent = null;
       retained.pageNavigation++;
       retained.navigation.cancel();
       retained.pendingHistory = null;
@@ -1092,8 +1278,7 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
   // 画中画仍可见但 Activity 已暂停；完全不可见时才暂停网页绘制。
   @Override
   protected void onStop() {
-    com.deepseekharness.app.core.HarnessController.get(this)
-        .removeReadyWebPageListener(runtimeChanged);
+    if (retained != null) retained.routeRequestSent = null;
     if (!pictureInPictureActiveOrTransitioning() && webView != null) {
       retained.needsStreamResume = true;
       webView.onPause();
@@ -1104,8 +1289,6 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
   @Override
   protected void onStart() {
     super.onStart();
-    com.deepseekharness.app.core.HarnessController.get(this)
-        .addReadyWebPageListener(runtimeChanged);
     if (!pictureInPictureActiveOrTransitioning() && webView != null) webView.onResume();
   }
 
@@ -1114,6 +1297,7 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
     super.onResume();
     browserResumed = true;
     if (synchronizeWebSession()) return;
+    continueInitialNavigation();
     if (!pictureInPictureActiveOrTransitioning() && webView != null)
       WebFrameRate.apply(this, webView);
     if (webView != null
@@ -1127,9 +1311,117 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
 
   @Override
   protected void onNewIntent(Intent intent) {
+    boolean explicitFullEntry = "FULL".equals(intent.getStringExtra(BrowserConversationRoute.MODE));
     super.onNewIntent(intent);
     setIntent(intent);
-    synchronizeWebSession();
+    if (!BrowserConversationRoute.current(intent, currentWebIdentity())) {
+      rejectConversationRoute();
+      return;
+    }
+    if (retained != null) retained.routeRequestSent = null;
+    synchronizeWebSession(explicitFullEntry);
+  }
+
+  private void rejectConversationRoute() {
+    Toast.makeText(
+            this,
+            com.deepseekharness.app.util.UiText.choose(
+                "这条任务所属的聊天实例已结束，请从启动页重新进入。",
+                "This task's chat instance has ended. Open the workspace from the start page."),
+            Toast.LENGTH_LONG)
+        .show();
+    hideConversation();
+  }
+
+  private void dispatchConversationRoute() {
+    if (retained == null
+        || !retained.ready
+        || retained.themeGate == null
+        || webView == null
+        || !isCurrentPage(webView)
+        || conversationHidden()
+        || !BrowserConversationRoute.current(getIntent(), currentWebIdentity())) return;
+    String request = getIntent().getStringExtra(BrowserConversationRoute.REQUEST);
+    String id = getIntent().getStringExtra(BrowserConversationRoute.SESSION);
+    if (request == null
+        || request.equals(retained.routeRequestSent)
+        || id == null
+        || id.isEmpty()
+        || id.length() > 512) return;
+    if (!androidx.webkit.WebViewFeature.isFeatureSupported(
+        androidx.webkit.WebViewFeature.WEB_MESSAGE_LISTENER)) {
+      Toast.makeText(
+              this,
+              com.deepseekharness.app.util.UiText.choose(
+                  "无法打开该任务的会话，当前聊天已保留。",
+                  "The task's session could not be opened. Your current chat was kept."),
+              Toast.LENGTH_LONG)
+          .show();
+      for (String key :
+          new String[] {
+            BrowserConversationRoute.REQUEST,
+            BrowserConversationRoute.SESSION,
+            BrowserConversationRoute.GENERATION,
+            BrowserConversationRoute.INSTANCE
+          }) getIntent().removeExtra(key);
+      return;
+    }
+    retained.routeRequestSent = request;
+    webView.evaluateJavascript(
+        "window.__dshaNativePresentation&&window.__dshaNativePresentation.route("
+            + WebPageScripts.sessionRoute(getIntent(), retained.themeGate)
+            + ");",
+        null);
+  }
+
+  private void receivePresentation(WebView source, String text, boolean mainFrame, String url) {
+    if (text == null
+        || text.length() > 2048
+        || retained.themeGate == null
+        || conversationHidden()
+        || !isCurrentPage(source)) return;
+    try {
+      var value = new org.json.JSONObject(text);
+      if (!retained.themeGate.accept(
+          source,
+          currentWebIdentity(),
+          value.optString("nonce"),
+          value.optLong("generation", -1),
+          value.optString("instance"),
+          value.optLong("sequence", -1),
+          mainFrame,
+          url)) return;
+      if ("theme-color".equals(value.optString("type"))) {
+        Integer color =
+            com.deepseekharness.app.util.BrowserThemeColor.parse(
+                value.optString("color"), getColor(R.color.surface));
+        if (color != null) {
+          retained.themeColor = color;
+          WebFullscreenUi.applyThemeColor(this, color);
+        }
+      } else if ("session-route".equals(value.optString("type"))
+          && value.optString("requestToken").equals(retained.routeRequestSent)
+          && value
+              .optString("sessionId")
+              .equals(getIntent().getStringExtra(BrowserConversationRoute.SESSION))) {
+        if (!"opened".equals(value.optString("status")))
+          Toast.makeText(
+                  this,
+                  com.deepseekharness.app.util.UiText.choose(
+                      "无法打开该任务的会话，当前聊天已保留。",
+                      "The task's session could not be opened. Your current chat was kept."),
+                  Toast.LENGTH_LONG)
+              .show();
+        for (String key :
+            new String[] {
+              BrowserConversationRoute.REQUEST,
+              BrowserConversationRoute.SESSION,
+              BrowserConversationRoute.GENERATION,
+              BrowserConversationRoute.INSTANCE
+            }) getIntent().removeExtra(key);
+      }
+    } catch (org.json.JSONException ignored) {
+    }
   }
 
   private void resumePageStreams() {
@@ -1149,6 +1441,7 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
 
   @Override
   protected void onDestroy() {
+    BrowserConversationRoute.unregister(this);
     com.deepseekharness.app.core.HarnessController.get(this)
         .removeReadyWebPageListener(runtimeChanged);
     if (microphoneRequests != null) microphoneRequests.cancel();
@@ -1177,13 +1470,16 @@ public class WebPreviewActivity extends PictureInPictureActivity implements WebF
       Bundle state = new Bundle();
       webView.saveState(state);
       out.putBundle("browser-state", state);
-      PreviewPageSession.Identity identity = retained.pageSession.identity();
-      if (identity != null) {
-        out.putLong(STATE_PAGE_GENERATION, identity.generation());
-        out.putString(STATE_PAGE_INSTANCE, identity.instanceId());
-        out.putString(STATE_PAGE_URL, identity.authUrl());
-      }
     }
+    PreviewPageSession.Identity identity =
+        webView != null ? retained.pageSession.identity() : obsoleteHostIdentity;
+    if (identity != null) {
+      out.putLong(STATE_PAGE_GENERATION, identity.generation());
+      out.putString(STATE_PAGE_INSTANCE, identity.instanceId());
+      out.putString(STATE_PAGE_URL, identity.authUrl());
+    }
+    if (emptyHostRetirementPending && webView == null && retained.view == null)
+      out.putBoolean("browser-retire-empty-host", true);
     super.onSaveInstanceState(out);
   }
 }

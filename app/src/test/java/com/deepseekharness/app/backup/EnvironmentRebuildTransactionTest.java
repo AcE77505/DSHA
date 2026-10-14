@@ -70,6 +70,8 @@ public final class EnvironmentRebuildTransactionTest {
                   });
       assertNull(EnvironmentRebuildTransaction.pending(counted, files));
       assertEquals(1, historyLists[0]);
+      assertFalse(new File(files, "host-environment-completed-v1.json").exists());
+      EnvironmentRebuildTransaction.archiveCompleted(counted, files);
       calls[0] = historyLists[0] = 0;
       long start = System.nanoTime();
       for (int i = 0; i < 5; i++) assertNull(EnvironmentRebuildTransaction.pending(counted, files));

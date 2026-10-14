@@ -414,16 +414,17 @@ final class RuntimeTools {
 
   /** 冷安装与受管候选共用；只准备内置实体依赖，不注册或改写用户 web profile。 */
   static void prepareBuiltinDependencies(File rootfs) throws IOException {
-    var fs = new com.deepseekharness.app.backup.AndroidBackupFileSystem();
-    File root = rootfs.getCanonicalFile();
+    prepareBuiltinDependencies(
+        new com.deepseekharness.app.backup.AndroidBackupFileSystem(), rootfs.getCanonicalFile());
+  }
+
+  static void prepareBuiltinDependencies(
+      com.deepseekharness.app.backup.BackupFileSystem fs, File root) throws IOException {
     String target = "../../usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules";
     if (!fs.stat(new File(root, "usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules"))
         .type
         .equals("DIRECTORY")) throw new IOException("BUNDLED_MODULES_MISSING");
-    var names =
-        new java.util.ArrayList<>(com.deepseekharness.app.util.BuiltinPlugins.DEFAULT_BUILTINS);
-    names.add("dsh-app-integration");
-    for (String name : names) {
+    for (String name : com.deepseekharness.app.util.BuiltinPlugins.SIGNED_BUILTINS) {
       File link =
           fs.child(
               root,
@@ -571,13 +572,14 @@ final class RuntimeTools {
     String relative = "usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/" + module;
     File target = new File(rootfs, relative);
     String[] candidate = {relative, "./" + relative};
-    try (ZipFile apk = new ZipFile(context.getPackageCodePath())) {
+    try (ZipFile apk = new ZipFile(context.getPackageCodePath());
+        ManagedModuleStaging owned =
+            ManagedModuleStaging.create(
+                new com.deepseekharness.app.backup.AndroidBackupFileSystem(),
+                context.getFilesDir().getCanonicalFile())) {
       ZipEntry entry = apk.getEntry("assets/dsh-runtime.bin");
       if (entry == null) return null;
-      File staging =
-          new File(rootfs, ".dsha-managed-module-" + Integer.toHexString(relative.hashCode()));
-      if (staging.exists()) deleteTemporary(staging);
-      staging.mkdirs();
+      File staging = owned.directory();
       final boolean[] found = {false};
       try (InputStream input = apk.getInputStream(entry)) {
         TarGzipExtractor.extractSelected(
@@ -594,31 +596,18 @@ final class RuntimeTools {
             });
       }
       if (!found[0]) {
-        deleteTemporary(staging);
         return null;
       }
       File extracted = new File(staging, relative);
       if (!extracted.isFile() || Compat.isSymbolicLink(extracted)) {
-        deleteTemporary(staging);
         return null;
       }
       byte[] bytes = Compat.readAll(extracted).getBytes(java.nio.charset.StandardCharsets.UTF_8);
       if (bytes.length == 0) {
-        deleteTemporary(staging);
         return null;
       }
-      deleteTemporary(staging);
       return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
     }
-  }
-
-  private static void deleteTemporary(File file) {
-    if (file.isDirectory()) {
-      File[] children = file.listFiles();
-      if (children != null) for (File child : children) deleteTemporary(child);
-    }
-    //noinspection ResultOfMethodCallIgnored
-    file.delete();
   }
 
   /** 锁定的文件预览模块：网页与独立 PDF Worker 共用兼容实现，旧内核的文件协议只做窄适配。 */

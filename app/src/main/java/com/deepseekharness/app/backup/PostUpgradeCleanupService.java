@@ -8,15 +8,8 @@ import com.deepseekharness.app.BuildConfig;
 public final class PostUpgradeCleanupService extends JobService {
   private static final int JOB = 9139, POLICY = 3;
   private static final WorkerQuiescence WORKERS = new WorkerQuiescence();
-  private static final java.util.concurrent.atomic.AtomicBoolean FACTORY_RESET =
-      new java.util.concurrent.atomic.AtomicBoolean();
 
   public static void schedule(Context context) {
-    if (AutomaticBackups.factoryResetPending(context)) {
-      JobScheduler scheduler = context.getSystemService(JobScheduler.class);
-      if (scheduler != null) scheduler.cancel(JOB);
-      return;
-    }
     var prefs = context.getSharedPreferences("dsha_storage_cleanup", MODE_PRIVATE);
     if (prefs.getInt("completedBuild", 0) >= BuildConfig.VERSION_CODE
         && prefs.getInt("policy", 0) >= POLICY) return;
@@ -31,26 +24,8 @@ public final class PostUpgradeCleanupService extends JobService {
               .build());
   }
 
-  static void suspendForFactoryReset(BackupControl control) throws java.io.IOException {
-    FACTORY_RESET.set(true);
-    WORKERS.closeGate();
-    try {
-      WORKERS.awaitIdle(control, 15_000);
-    } catch (java.io.IOException failure) {
-      FACTORY_RESET.set(false);
-      WORKERS.reopen();
-      throw failure;
-    }
-  }
-
-  static void resumeAfterFactoryReset() {
-    FACTORY_RESET.set(false);
-    WORKERS.reopen();
-  }
-
   private void save(boolean success, String value, String detail) {
     synchronized (PostUpgradeCleanupService.class) {
-      if (FACTORY_RESET.get() || AutomaticBackups.factoryResetPending(this)) return;
       var edit = getSharedPreferences("dsha_storage_cleanup", MODE_PRIVATE).edit();
       if (success)
         edit.putInt("completedBuild", BuildConfig.VERSION_CODE)
@@ -66,7 +41,6 @@ public final class PostUpgradeCleanupService extends JobService {
 
   @Override
   public boolean onStartJob(JobParameters params) {
-    if (FACTORY_RESET.get() || AutomaticBackups.factoryResetPending(this)) return false;
     WorkerQuiescence.Lease lease = WORKERS.tryBegin();
     if (lease == null) return false;
     Thread worker =
@@ -109,6 +83,6 @@ public final class PostUpgradeCleanupService extends JobService {
 
   @Override
   public boolean onStopJob(JobParameters params) {
-    return !FACTORY_RESET.get() && !AutomaticBackups.factoryResetPending(this);
+    return true;
   }
 }

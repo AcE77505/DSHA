@@ -20,9 +20,17 @@ public final class HostOperationArchive {
     return new File(root(files), COMPLETED);
   }
 
-  /** Completed records are inert history. A legacy completed tree is checked once before
-   * ordinary startup stops traversing it; explicit history reads still inspect real bytes. */
+  /** Explicit host operations may seal validated history; ordinary probes only read its bytes. */
   public static synchronized void verifyCompleted(BackupFileSystem fs, File files)
+      throws IOException {
+    verifyCompleted(fs, files, true);
+  }
+
+  static synchronized void inspectCompleted(BackupFileSystem fs, File files) throws IOException {
+    verifyCompleted(fs, files, false);
+  }
+
+  private static void verifyCompleted(BackupFileSystem fs, File files, boolean persistProof)
       throws IOException {
     File operations = root(files),
         history = completedRoot(files),
@@ -46,7 +54,7 @@ public final class HostOperationArchive {
       if (!fs.stat(fs.child(operations, id)).type.equals("MISSING"))
         throw new IOException("OPERATION_DUPLICATE");
     }
-    CompletedHistory.write(fs, proof, "filesKey", filesKey, historyKey);
+    if (persistProof) CompletedHistory.write(fs, proof, "filesKey", filesKey, historyKey);
   }
 
   /** Create an active slot only after safely archiving proven terminal journals. */

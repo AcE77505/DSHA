@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 spec=importlib.util.spec_from_file_location('unit_runner',ROOT/'tools/run-unit-tests.py');runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
 production={
- 'backup':['BackupFileSystem','AndroidBackupFileSystem','AndroidTreeFileSystem','OwnershipCheckFailure','FactoryReset','ColdInstallTransaction','TreeDigestCache','NativeRestorePlan'],
+ 'backup':['BackupFileSystem','AndroidBackupFileSystem','AndroidTreeFileSystem','OwnershipCheckFailure','ColdInstallTransaction','TreeDigestCache','NativeRestorePlan'],
  'runtime':['OwnedRuntimeSession','IsolatedInstallProcess','ColdToolsInstaller'],
  'recovery':['RecoveryRuntime'],
  'util':['BoundedProcessRunner','ColdInstallPlan','PortableExportPlan']}

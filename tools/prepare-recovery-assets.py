@@ -11,6 +11,7 @@ import tarfile
 from pathlib import Path
 from generated_asset_directory import prune as prune_generated
 from recovery_runtime_overlay import build as build_browser_overlay, TARGETS as BROWSER_TARGETS, INPUT_ASSETS
+from native_runtime_proof import recovery_launcher_hashes
 
 ROOT = Path(__file__).resolve().parents[1]
 HOME = ROOT / 'tools/recovery-runtime'
@@ -136,14 +137,7 @@ def prepare(output, shared_assets):
     agent = ROOT / 'app/src/main/assets/recovery-agent.js'
     if not agent.is_file():
         raise ValueError('RECOVERY_AGENT_MISSING')
-    launchers = {}
-    for flavor, folder, names in [
-        ('standard', 'main', ['libproot.so', 'libprootloader.so', 'libtalloc.so', 'libandroidshmem.so']),
-        ('low', 'low', ['libproot_legacy.so', 'libprootloader_legacy.so'])
-    ]:
-        launchers[flavor] = {name: digest(ROOT / ('app/src/' + folder + '/jniLibs/arm64-v8a') / name) for name in names}
-    launchers['low']['libtalloc.so'] = launchers['standard']['libtalloc.so']
-    launchers['low']['libandroidshmem.so'] = launchers['standard']['libandroidshmem.so']
+    launchers = recovery_launcher_hashes(ROOT)
     profiles = {name: digest(ROOT / 'app/src/main/assets' / name)
                 for name in ['recovery-profile-package.json', 'recovery-profile.patch.yml']}
     overlay_inputs = {name: digest(ROOT / 'app/src/main/assets' / name) for name in INPUT_ASSETS}

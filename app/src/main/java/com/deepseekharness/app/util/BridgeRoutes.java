@@ -12,6 +12,10 @@ public final class BridgeRoutes {
     DEVICE_PLAN(true),
     DEVICE_EXECUTE(true),
     NOTIFY(false),
+    TASK_CONTEXT(false),
+    TASK_EVENT(false),
+    TASK_CLAIM(false),
+    TASK_ACK(false),
     TOAST(false),
     READ_FILE(false),
     HEALTH(false),
@@ -60,6 +64,10 @@ public final class BridgeRoutes {
     add(routes, "/device/plan", Route.DEVICE_PLAN);
     add(routes, "/device/execute", Route.DEVICE_EXECUTE);
     add(routes, "/app/notify", Route.NOTIFY);
+    add(routes, "/app/tasks/context", Route.TASK_CONTEXT);
+    add(routes, "/app/tasks/event", Route.TASK_EVENT);
+    add(routes, "/app/tasks/claim", Route.TASK_CLAIM);
+    add(routes, "/app/tasks/ack", Route.TASK_ACK);
     add(routes, "/app/toast", Route.TOAST);
     add(routes, "/app/readfile", Route.READ_FILE);
     add(routes, "/health", Route.HEALTH);

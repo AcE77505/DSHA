@@ -208,11 +208,11 @@ class PolicyTest(unittest.TestCase):
         output = self.execute(plan).output
         self.assertIn('[用户应用]', output)
         self.assertIn('[系统应用]', output)
-        self.assertEqual(['/system/bin/pm list packages -U -3', '/system/bin/pm list packages -U -s', '/system/bin/am force-stop example.app'], self.sent)
+        self.assertEqual(['/system/bin/pm list packages --user 0 -U -3', '/system/bin/pm list packages --user 0 -U -s', '/system/bin/am force-stop --user 0 example.app'], self.sent)
 
     def test_pid_is_resolved_to_package(self):
         self.execute(self.plan('STOP', ['kill', '-9', '42'], ['42']))
-        self.assertEqual('/system/bin/am force-stop example.app', self.sent[-1])
+        self.assertEqual('/system/bin/am force-stop --user 0 example.app', self.sent[-1])
 
     def test_mixed_batch_system_and_own_app_block_every_stop(self):
         for values in (['42', '43'], ['42', '44'], ['42', '999']):
@@ -255,16 +255,21 @@ class PolicyTest(unittest.TestCase):
             policy.sms_provider_path('/data/local/tmp/file', dict(RULES, smsReadRoots=None))
 
     def test_multiple_android_users_and_cloned_apps(self):
-        self.users = 'package:example.app uid:12345,99912345\npackage:com.dsh.client uid:13333,99913333\n'
+        self.users = 'package:example.app uid:12345,99912345\npackage:com.dsh.client uid:12346,99912346\n'
         self.systems = 'package:android uid:1000,99901000\n'
-        self.ps = 'PID UID NAME\n42 99912345 example.app\n43 99901000 system_server\n'
-        self.execute(self.plan('STOP', ['kill', '42'], ['42']))
-        self.assertEqual('/system/bin/am force-stop example.app', self.sent[-1])
-        self.sent.clear()
-        with self.assertRaises(policy.Blocked): self.execute(self.plan('STOP', ['kill', '42', '43'], ['42', '43']))
+        with self.assertRaises(policy.Blocked): self.execute(self.plan('STOP', ['kill', '42'], ['42']))
         self.no_mutations()
-        self.users += 'package:example.shared uid:22222,99901000\n'
-        with self.assertRaises(policy.Blocked): self.execute(self.plan('STOP', ['am', 'force-stop', 'example.shared'], ['example.shared']))
+        self.sent.clear()
+        self.users = 'package:example.app uid:1012345\npackage:com.dsh.client uid:1012346\n'
+        self.systems = 'package:android uid:1001000\n'
+        self.ps = 'PID UID NAME\n42 1012345 example.app\n'
+        plan=self.plan('STOP',['kill','42'],['42']);plan['selfUid']=1012346
+        self.execute(plan)
+        self.assertEqual('/system/bin/am force-stop --user 10 example.app', self.sent[-1])
+        self.assertTrue(all('--user 10' in command for command in self.sent if command.startswith('/system/bin/pm ')))
+        self.sent.clear();self.users += 'Error: inaccessible other user\n'
+        with self.assertRaises(policy.Blocked): self.execute(plan)
+        self.no_mutations()
 
     def test_actual_clone_identity_protects_its_uid_and_missing_identity_never_stops(self):
         self.users = 'package:example.app uid:12345\npackage:com.dsh.clienu uid:12346,99912346\npackage:shared.app uid:99912346\n'

@@ -33,9 +33,19 @@ public final class DeviceShellExecutor {
       if (uid == 0 || uid == 2000) validateRootReadPaths(plan);
       if (plan.kind == DeviceShellPolicy.Kind.STOP) {
         if (identity == null) throw new IOException("SELF_PACKAGE_UNVERIFIED");
-        String users = checked(runner.run(Arrays.asList("pm", "list", "packages", "-U", "-3")));
-        String systems = checked(runner.run(Arrays.asList("pm", "list", "packages", "-U", "-s")));
-        DeviceAppPolicy.Snapshot snapshot = DeviceAppPolicy.snapshot(users, systems, identity.name);
+        int user = identity.uid / 100000;
+        String users =
+            checked(
+                runner.run(
+                    Arrays.asList(
+                        "pm", "list", "packages", "--user", String.valueOf(user), "-U", "-3")));
+        String systems =
+            checked(
+                runner.run(
+                    Arrays.asList(
+                        "pm", "list", "packages", "--user", String.valueOf(user), "-U", "-s")));
+        DeviceAppPolicy.Snapshot snapshot =
+            DeviceAppPolicy.snapshot(users, systems, identity.name, user, identity.uid);
         String processes =
             plan.command().equals("kill")
                 ? checked(runner.run(Arrays.asList("ps", "-A", "-o", "PID,UID,NAME")))
@@ -49,7 +59,8 @@ public final class DeviceShellExecutor {
         StringBuilder output = new StringBuilder(snapshot.grouped());
         for (String target : targets) {
           // 按包名操作，避免检查完 PID 后号码复用而误伤系统进程。
-          String result = runner.run(Arrays.asList("am", "force-stop", target));
+          String result =
+              runner.run(Arrays.asList("am", "force-stop", "--user", String.valueOf(user), target));
           output
               .append(com.deepseekharness.app.util.UiText.text("停止用户应用："))
               .append(target)

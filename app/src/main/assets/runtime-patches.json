@@ -64,6 +64,45 @@
       "markers": [
         "DSHA_LAYOUT_RECOVERY_V1"
       ]
+    },
+    {
+      "asset": "tool-stream-identity-patch.json"
+    },
+    {
+      "asset": "tool-block-identity-patch.json"
+    },
+    {
+      "asset": "tool-dispatch-validation-patch.json"
+    },
+    {
+      "asset": "tool-messages-history-patch.json"
+    },
+    {
+      "asset": "tool-history-display-patch.json"
+    },
+    {
+      "asset": "guard-tools-patch.json",
+      "markers": [
+        "DSHA_REQUIRED_POLICY_V1"
+      ]
+    },
+    {
+      "asset": "guard-bash-patch.json",
+      "markers": [
+        "DSHA_REQUIRED_POLICY_V1"
+      ]
+    },
+    {
+      "asset": "guard-fs-patch.json",
+      "markers": [
+        "DSHA_REQUIRED_POLICY_V1"
+      ]
+    },
+    {
+      "asset": "guard-editor-patch.json",
+      "markers": [
+        "DSHA_REQUIRED_POLICY_V1"
+      ]
     }
   ],
   "specialized": [

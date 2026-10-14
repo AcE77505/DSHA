@@ -1,6 +1,5 @@
 package com.deepseekharness.app.core;
 
-import com.deepseekharness.app.util.Compat;
 import com.deepseekharness.app.util.WebProcSel;
 import java.io.File;
 import java.io.IOException;
@@ -47,7 +46,8 @@ final class StartupEnvironmentActions implements StartupPipeline.Actions {
   }
 
   public void recoverData() throws Exception {
-    com.deepseekharness.app.BackupManager.recoverInterrupted(owner);
+    // 普通启动只读发现旧日志；宿主回切只允许显式恢复入口取得停止屏障后执行。
+    com.deepseekharness.app.BackupManager.requireLegacyRestoreClosed(owner);
   }
 
   public void cleanup() throws IOException {
@@ -74,12 +74,8 @@ final class StartupEnvironmentActions implements StartupPipeline.Actions {
       File sentinel = new File(root, WebProcSel.pidFileRel(WebProcSel.STOP_SENTINEL));
       if (sentinel.exists() && !sentinel.delete())
         throw new IOException(com.deepseekharness.app.util.UiText.text("无法清除停止标记"));
-      try {
-        Compat.write(new File(root, "root/dsh-web.log"), new byte[0]);
-      } catch (IOException error) {
-        state.diagnostics.message(
-            generation, "WEB_LOG_UNAVAILABLE:" + error.getClass().getSimpleName());
-      }
+      // Web stdout gets a new private host sink for each launch attempt. Legacy workspace logs
+      // and their links remain untouched; this preparation never truncates a guest path.
       return true;
     }
   }

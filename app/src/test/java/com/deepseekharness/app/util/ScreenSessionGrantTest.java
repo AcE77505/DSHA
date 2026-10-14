@@ -5,6 +5,20 @@ import static org.junit.Assert.*;
 
 public class ScreenSessionGrantTest {
   @Test
+  public void pauseBlocksAutomaticAndManualApprovalsUntilExplicitResume() {
+    var grant = new ScreenSessionGrant();
+    long queued = grant.revision();
+    grant.setPaused(true);
+    grant.revoke(); // stopping a run must not silently resume a user's pause
+    assertTrue(grant.paused());
+    assertFalse(grant.completeConfirmation(true, 7, 7, grant.revision(), true, true));
+    grant.setPaused(false);
+    assertFalse(grant.completeConfirmation(true, 7, 7, queued, true, true));
+    assertTrue(grant.completeConfirmation(true, 8, 8, grant.revision(), true, true));
+    assertFalse(grant.allowed(7));
+  }
+
+  @Test
   public void grantLastsOnlyForTheSameRun() {
     ScreenSessionGrant grant = new ScreenSessionGrant();
     assertFalse(grant.allowed(1));

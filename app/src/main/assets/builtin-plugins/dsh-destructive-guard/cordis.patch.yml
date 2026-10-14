@@ -1,4 +1,5 @@
-# dsh-destructive-guard bundle patch：把"删除必须先确认"做成组合层的硬约束。
+# dsh-destructive-guard bundle patch：提供明确的审批档位；强制工具策略属于签名 ToolRuntime。
+# profile 禁用此插件或热重载不移除 ToolRuntime 的执行前/最终分派核验。
 #
 # 为什么必须动审批策略（否则守卫形同虚设）：
 #   dsh-base 按 `DSH_PERMISSION_MODE` 推导审批策略 —— danger-full-access ⇒ policy=never
@@ -46,12 +47,12 @@
         sandbox: danger-full-access
         approval: never
         name: danger-full-access
-        description: Full file access without approval prompts; destructive commands are hard-denied by the guard.
+        description: Full file access without approval prompts; destructive and opaque agent commands are refused.
       guarded-full-access:
         sandbox: danger-full-access
         approval: ask
         name: guarded-full-access
-        description: Full file access, but destructive commands (rm and friends) must be confirmed first.
+        description: Full file access; destructive or opaque agent commands and existing-file overwrites ask once.
 - insert:
   - id: destructive-guard
     name: 'dsh-destructive-guard'

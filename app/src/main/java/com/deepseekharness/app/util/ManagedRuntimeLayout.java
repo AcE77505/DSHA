@@ -19,8 +19,7 @@ public final class ManagedRuntimeLayout {
     out.add("usr/local/share/dsha/managed-assets-v2");
     out.add("etc/profile.d/dsha-runtime-env.sh");
     out.add("root/dsha-builtin.txt");
-    out.add("root/dsha-app-integration");
-    for (String name : BuiltinPlugins.DEFAULT_BUILTINS)
+    for (String name : BuiltinPlugins.SIGNED_BUILTINS)
       out.add(BuiltinPlugins.entityDir(name).substring(1));
     for (String name :
         new String[] {

@@ -218,11 +218,16 @@ def stop_targets(plan, shell):
     self_package = plan.get('selfPackage')
     if not isinstance(self_package, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+', self_package):
         raise Blocked('SELF_PACKAGE_UNVERIFIED')
+    self_uid = plan.get('selfUid')
+    if type(self_uid) is not int or self_uid < 10000 or self_uid > 2147483647:
+        raise Blocked('DEVICE_USER_SCOPE_UNVERIFIED')
+    user = self_uid // 100000
+    plan['verifiedUser'] = user
     # 连接可能花时间；真正停止前在该连接上重新获取全量分组，不沿用旧快照。
     apps = []
     groups = ''
     for system in (False, True):
-        output = checked(shell(argv_command(['pm', 'list', 'packages', '-U', '-s' if system else '-3'])))
+        output = checked(shell(argv_command(['pm', 'list', 'packages', '--user', str(user), '-U', '-s' if system else '-3'])))
         if len(output) > 1024 * 1024 or system and not output.strip():
             raise Blocked('应用清单不完整')
         groups += '[系统应用]\n' if system else '[用户应用]\n'
@@ -232,13 +237,16 @@ def stop_targets(plan, shell):
             match = re.fullmatch(r'package:([A-Za-z0-9_.]+) uid:([0-9]+(?:,[0-9]+)*)', row.strip())
             if not match:
                 raise Blocked('应用清单格式无法确认')
-            apps.append(dict(name=match[1], uids={int(value) for value in match[2].split(',')}, system=system))
+            uids = {int(value) for value in match[2].split(',')}
+            if any(uid // 100000 != user for uid in uids):
+                raise Blocked('DEVICE_USER_SCOPE_MISMATCH')
+            apps.append(dict(name=match[1], uids=uids, system=system))
             groups += match[1] + ' uid=' + match[2] + '\n'
     if len({app['name'] for app in apps}) != len(apps):
         raise Blocked('应用归属冲突')
     plan['groups'] = groups
     by_name = {app['name']: app for app in apps}
-    if self_package not in by_name:
+    if self_package not in by_name or self_uid not in by_name[self_package]['uids']:
         raise Blocked('SELF_PACKAGE_INVENTORY_MISSING')
     protected = {uid for app in apps if app['system'] or any(uid % 100000 < 10000 for uid in app['uids'])
                  or app['name'] in (self_package, 'moe.shizuku.privileged.api') for uid in app['uids']}
@@ -256,7 +264,7 @@ def stop_targets(plan, shell):
         requested = []
         for value in plan['operands']:
             uid = processes.get(int(value))
-            if uid is None or uid % 100000 < 10000 or uid in protected:
+            if uid is None or uid // 100000 != user or uid % 100000 < 10000 or uid in protected:
                 raise Blocked('系统关键进程或归属不明的 PID 不可结束：' + value)
             owners = [app['name'] for app in apps if uid in app['uids']]
             if len(owners) != 1:
@@ -298,7 +306,7 @@ def execute(plan, shell, result_class):
         targets = stop_targets(plan, shell)
         output = plan.get('groups', '')
         for name in targets:
-            result = shell(argv_command(['am', 'force-stop', name]))
+            result = shell(argv_command(['am', 'force-stop', '--user', str(plan['verifiedUser']), name]))
             output += '停止用户应用：' + name + '\n' + result.output + '\n'
             if result.exit_code != 0:
                 return result_class(output, result.exit_code)

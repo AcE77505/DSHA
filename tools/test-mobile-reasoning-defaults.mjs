@@ -1,4 +1,4 @@
-// 验证实际随包的 3.0.5 设置补齐及 DSHA 服务入口，使用独立设置夹具。
+// 验证实际随包的 3.1.0 设置补齐及 DSHA 服务入口，使用独立设置夹具。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -50,6 +50,22 @@ test('补齐写入带同次读取的版本，冲突失败时不重放旧候选',
   assert.equal(result.status,'failed');
   assert.equal(writes,1);
   assert.equal(user.providers.custom.models[0].reasoningEfforts,undefined);
+});
+
+test('3.1.0 auto只表示不写：尊重模型/route/合并层明确不支持，显式映射仍保留',()=>{
+  const user={providers:{custom:{compat:{supportsReasoningEffort:false},models:[
+    {id:'route-disabled'}, {id:'model-overrides-route',compat:{supportsReasoningEffort:true}},
+    {id:'disabled',reasoningEfforts:false}, {id:'explicit',reasoningEfforts:{high:'custom'}}
+  ]}, merged:{models:[{id:'merged-disabled'}]}}};
+  const resolved=structuredClone(user);
+  resolved.providers.merged.models[0].compat={supportsReasoningEffort:false};
+  const before=structuredClone(user),plan=planReasoningEffortFill(resolved,user);
+  assert.equal(plan.filled,1);assert.equal(plan.auto,2);assert.equal(plan.ops.length,1);
+  const models=plan.ops[0].value;
+  assert.equal(models[0].reasoningEfforts,undefined);
+  assert.deepEqual(models[1].reasoningEfforts,DEFAULT_REASONING_EFFORTS);
+  assert.equal(models[2].reasoningEfforts,false);assert.deepEqual(models[3].reasoningEfforts,{high:'custom'});
+  assert.deepEqual(user,before);assert.ok(!JSON.stringify(plan.ops).includes('"auto"'));
 });
 
 test('DSHA 服务入口实际启用上游设置补齐并释放定时器', async () => {

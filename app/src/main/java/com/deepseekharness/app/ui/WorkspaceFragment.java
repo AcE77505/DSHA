@@ -164,8 +164,18 @@ public class WorkspaceFragment extends Fragment {
     if (pending)
       summary.append(com.deepseekharness.app.util.UiText.text("\n\n有未完成的环境维护，请恢复原环境后再继续。"));
     ((TextView) view.findViewById(R.id.workspace_backup_status)).setText(summary.toString());
-    for (int id : new int[] {R.id.workspace_backup, R.id.workspace_location, R.id.workspace_reset})
-      view.findViewById(id).setEnabled(!busy && !pending);
+    // 宿主页可独立显示备份与只读救援；真正执行仍由 NativeBackupJobs 核验维护门禁。
+    boolean hostData =
+        com.deepseekharness.app.util.WorkspaceEntryPolicy.enabled(
+            com.deepseekharness.app.util.WorkspaceEntryPolicy.Entry.HOST_DATA, busy, pending);
+    for (int id : new int[] {R.id.workspace_backup, R.id.workspace_location})
+      view.findViewById(id).setEnabled(hostData);
+    view.findViewById(R.id.workspace_reset)
+        .setEnabled(
+            com.deepseekharness.app.util.WorkspaceEntryPolicy.enabled(
+                com.deepseekharness.app.util.WorkspaceEntryPolicy.Entry.CONFIG_RESET,
+                busy,
+                pending));
     if (s.status == com.deepseekharness.app.util.BackupTaskState.Status.PREVIEW
         && previewDialog == null
         && isResumed()) {

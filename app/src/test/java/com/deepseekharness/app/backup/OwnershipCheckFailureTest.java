@@ -12,19 +12,4 @@ public class OwnershipCheckFailureTest {
     assertEquals(0L, failure.diagnostic.get("actualUid"));
     assertEquals(10123L, failure.diagnostic.get("expectedUid"));
   }
-
-  @Test
-  public void privateReceiptUsesLogicalPathAndNeverLeaksOutsideAbsoluteTarget() {
-    var root = new java.io.File("synthetic-private").getAbsoluteFile();
-    var failure =
-        new OwnershipCheckFailure(
-            new java.io.File(root, "files/candidate").getPath(), 1, 2, 0, 7, 8);
-    assertEquals(
-        "files" + java.io.File.separator + "candidate",
-        FactoryReset.ownershipDiagnostic(root, failure).get("path"));
-    var outside =
-        new OwnershipCheckFailure(new java.io.File("unrelated").getAbsolutePath(), 1, 2, 0, 7, 8);
-    assertEquals(
-        "UNMAPPED_PRIVATE_TARGET", FactoryReset.ownershipDiagnostic(root, outside).get("path"));
-  }
 }

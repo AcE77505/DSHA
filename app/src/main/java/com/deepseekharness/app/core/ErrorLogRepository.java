@@ -7,7 +7,6 @@ import androidx.lifecycle.AndroidViewModel;
 import androidx.lifecycle.MutableLiveData;
 import com.deepseekharness.app.BuildConfig;
 import com.deepseekharness.app.data.DownloadsExport;
-import com.deepseekharness.app.util.Compat;
 import com.deepseekharness.app.util.SensitiveData;
 import java.io.File;
 import java.io.InputStream;
@@ -45,8 +44,8 @@ public final class ErrorLogRepository extends AndroidViewModel {
             false,
             uri.isEmpty()
                 ? com.deepseekharness.app.util.UiText.choose(
-                    "导出启动状态与错误类别。原始运行输出保留在应用内的诊断页，不进入默认导出。",
-                    "Export startup states and error categories. Raw runtime output stays in the app's diagnostics and is excluded from the default export.")
+                    "导出启动状态、错误类别、受控宿主记录与资格探针片段；不含对话或用户任务输出。",
+                    "Export startup states, error categories, controlled host records and qualification excerpts, excluding conversations and user-task output.")
                 : com.deepseekharness.app.util.UiText.format("上次保存：%s（点按查看）", name),
             uri.isEmpty() ? null : Uri.parse(uri)));
   }
@@ -75,8 +74,9 @@ public final class ErrorLogRepository extends AndroidViewModel {
           File staged = null;
           try {
             String name = filename();
-            staged = File.createTempFile("dsha-error-log-", ".txt", getApplication().getCacheDir());
-            Compat.write(staged, collect(getApplication()).getBytes(StandardCharsets.UTF_8));
+            staged =
+                DownloadsExport.stagePrivateCacheSource(
+                    getApplication(), collect(getApplication()).getBytes(StandardCharsets.UTF_8));
             Uri uri;
             if (destination == null) {
               DownloadsExport.Result written =
@@ -220,10 +220,27 @@ public final class ErrorLogRepository extends AndroidViewModel {
           .append(entry.safe)
           .append('\n');
     text.append(
+            com.deepseekharness.app.util.UiText.choose(
+                "\n=== 宿主运行时只读记录（历史闭合未重新核验）===\n",
+                "\n=== Host runtime records (read-only; recorded closure is not revalidated) ===\n"))
+        .append(hostRuntimeRecords(context))
+        .append('\n');
+    text.append(
         com.deepseekharness.app.util.UiText.choose(
-            "\n原始进程输出、插件消息与日志正文未进入默认报告；可在应用内诊断页查看。分享前仍请检查设备型号等信息。\n",
-            "\nRaw process output, plugin messages and log bodies are excluded from this default report; inspect them in the app's diagnostics. Review device details before sharing.\n"));
+            "\n报告仅含启动类别、宿主记录状态和隔离资格探针的脱敏片段，不含对话、用户任务输出或插件日志正文；缺失的旧失败输出不能补回。分享前请检查设备型号等信息。\n",
+            "\nThis report includes startup categories, host record states and redacted isolated qualification excerpts, excluding conversations, user-task output and plugin logs. Missing historical failure output cannot be reconstructed. Review device details before sharing.\n"));
     return SensitiveData.redact(text.toString());
+  }
+
+  private static String hostRuntimeRecords(android.content.Context context) {
+    try {
+      // Resolve Android's trusted /data/user/0 alias once. Descendants stay lstat/NOFOLLOW-only.
+      return com.deepseekharness.app.backup.HostRuntimeDiagnostics.collect(
+          new com.deepseekharness.app.backup.AndroidBackupFileSystem(),
+          context.getFilesDir().getCanonicalFile());
+    } catch (java.io.IOException | RuntimeException unavailable) {
+      return "{\"readOnly\":true,\"status\":\"HOST_ROOT_UNAVAILABLE\"}";
+    }
   }
 
   private static String category(String value) {

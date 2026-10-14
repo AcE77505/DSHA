@@ -209,6 +209,7 @@ public final class PluginRepository extends AndroidViewModel {
         if (pkg.optBoolean("existingConflict"))
           text.append(
               com.deepseekharness.app.util.UiText.text("当前已有同名插件，现有版本不会被覆盖。请先到插件管理处理冲突。\n"));
+        text.append(capabilityDescription(pkg.optJSONObject("capabilities")));
         text.append('\n');
       }
       text.append(com.deepseekharness.app.util.UiText.text("来源："))
@@ -292,6 +293,134 @@ public final class PluginRepository extends AndroidViewModel {
 
   public String installedDescription() {
     return installedPreview == null ? "" : installedPreview.description();
+  }
+
+  public void inspectCapabilities(Item item, java.util.function.Consumer<String> shown) {
+    final String[] details = {""};
+    submit(
+        com.deepseekharness.app.util.UiText.choose(
+            "正在读取插件能力声明…", "Reading plugin capability declarations…"),
+        proot -> {
+          JSONObject output =
+              result(runManager(proot, "capabilities " + ShellQuote.arg(item.name)));
+          details[0] = capabilityDescription(output.optJSONObject("capabilities"));
+          return output.getString("message");
+        },
+        () -> shown.accept(details[0]));
+  }
+
+  public static String capabilityDescription(JSONObject report) {
+    var text = new StringBuilder();
+    text.append(
+        com.deepseekharness.app.util.UiText.choose(
+            "\n静态能力信息（声明与源码线索，不代表权限或安全保证）\n",
+            "\nStatic capabilities (declarations and source references, not permissions or safety guarantees)\n"));
+    if (report == null)
+      return text.append(
+              com.deepseekharness.app.util.UiText.choose(
+                  "历史记录无此信息；可在详情中重新检查。\n",
+                  "No information in this historical record; inspect again from plugin details.\n"))
+          .toString();
+    for (String key : new String[] {"clientInject", "scripts", "pnpmfiles"}) {
+      String label =
+          switch (key) {
+            case "clientInject" ->
+                com.deepseekharness.app.util.UiText.choose(
+                    "声明的客户端服务：", "Declared client services: ");
+            case "scripts" ->
+                com.deepseekharness.app.util.UiText.choose("脚本声明：", "Script declarations: ");
+            default -> "pnpmfile: ";
+          };
+      text.append(label).append(report.optJSONArray(key)).append('\n');
+    }
+    text.append(
+            com.deepseekharness.app.util.UiText.choose(
+                "已读依赖 manifests / 脚本声明：", "Dependency manifests read / script declarations: "))
+        .append(report.optInt("inspectedDependencyManifests"))
+        .append(" / ")
+        .append(report.optInt("dependencyScriptCount"))
+        .append('\n');
+    JSONArray findings = report.optJSONArray("findings");
+    if (findings != null)
+      for (int i = 0; i < Math.min(findings.length(), 200); i++) {
+        JSONObject finding = findings.optJSONObject(i);
+        if (finding == null) continue;
+        text.append(
+                finding.optString("kind").equals("server-inject")
+                    ? com.deepseekharness.app.util.UiText.choose(
+                        "声明的服务依赖：", "Declared service dependency: ")
+                    : com.deepseekharness.app.util.UiText.choose(
+                        "设备桥调用线索：", "Device bridge source reference: "))
+            .append(finding.optString("value"))
+            .append(" · ")
+            .append(finding.optString("file"))
+            .append(':')
+            .append(finding.optInt("line"))
+            .append('\n');
+      }
+    JSONArray unknown = report.optJSONArray("unknown");
+    if (unknown != null && unknown.length() > 0) {
+      text.append(com.deepseekharness.app.util.UiText.choose("未确认范围：\n", "Unconfirmed scope:\n"));
+      for (int i = 0; i < Math.min(unknown.length(), 200); i++)
+        text.append("  ").append(capabilityUnknown(unknown.optString(i))).append('\n');
+    }
+    text.append("DSH ")
+        .append(report.optString("runtimeDsh"))
+        .append(" · ")
+        .append(report.optString("parser"))
+        .append('\n');
+    return text.toString();
+  }
+
+  private static String capabilityUnknown(String value) {
+    String code = value, prefix = "";
+    int separator = value.lastIndexOf(':');
+    if (separator >= 0 && !value.startsWith("entry not inspected:")) {
+      prefix = value.substring(0, separator) + ": ";
+      code = value.substring(separator + 1);
+    }
+    String translated =
+        switch (code) {
+          case "patch references and dynamically loaded modules are not followed" ->
+              com.deepseekharness.app.util.UiText.choose(
+                  "未跟踪补丁引用与动态加载模块",
+                  "Patch references and dynamically loaded modules were not followed");
+          case "dynamic-inject", "non-literal client inject" ->
+              com.deepseekharness.app.util.UiText.choose(
+                  "动态服务声明未确认", "Dynamic service declarations are unconfirmed");
+          case "reexported-inject" ->
+              com.deepseekharness.app.util.UiText.choose(
+                  "重导出的服务声明未确认", "Reexported service declarations are unconfirmed");
+          case "dynamic-bridge" ->
+              com.deepseekharness.app.util.UiText.choose(
+                  "动态设备桥调用未确认", "Dynamic device bridge calls are unconfirmed");
+          case "node-limit", "finding-limit" ->
+              com.deepseekharness.app.util.UiText.choose(
+                  "达到静态分析预算", "Static analysis budget reached");
+          case "unparsed-source" ->
+              com.deepseekharness.app.util.UiText.choose("源码未能解析", "Source could not be parsed");
+          case "no declared server entry" ->
+              com.deepseekharness.app.util.UiText.choose("未声明服务入口", "No server entry declared");
+          case "invalid script declaration" ->
+              com.deepseekharness.app.util.UiText.choose("脚本声明格式无效", "Invalid script declaration");
+          case "dependency scripts were not inspected",
+                  "dependency script coverage incomplete",
+                  "dependency manifest coverage incomplete" ->
+              com.deepseekharness.app.util.UiText.choose(
+                  "依赖脚本声明未完整检查", "Dependency script declarations were not fully inspected");
+          case "AST parser unavailable or budget exceeded" ->
+              com.deepseekharness.app.util.UiText.choose(
+                  "静态解析器不可用或超出预算", "Static parser unavailable or budget exceeded");
+          case "package changed during inspection", "package input not inspected" ->
+              com.deepseekharness.app.util.UiText.choose(
+                  "包声明输入未能确认", "Package declaration input could not be confirmed");
+          default ->
+              value.startsWith("entry not inspected:")
+                  ? com.deepseekharness.app.util.UiText.format(
+                      "入口未检查：%s", value.substring("entry not inspected:".length()).trim())
+                  : value;
+        };
+    return prefix + translated;
   }
 
   public LiveData<Preview> preview() {

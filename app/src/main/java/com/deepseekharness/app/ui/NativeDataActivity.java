@@ -61,16 +61,16 @@ public final class NativeDataActivity extends AppCompatActivity {
     return UiText.choose(zh, en);
   }
 
-  private final ActivityResultLauncher<String> destination =
+  private final ActivityResultLauncher<Uri> destination =
       registerForActivityResult(
-          new ActivityResultContracts.CreateDocument(
-              com.deepseekharness.app.util.BackupFileNames.MIME_TYPE),
+          new ActivityResultContracts.OpenDocumentTree(),
           uri -> {
             if (pending.reexportId != null) {
               String source = pending.reexportId;
               pending.reexportId = null;
               try {
-                if (uri != null && !jobs.reexport(source, pending.password, uri, pending.filename))
+                if (uri != null
+                    && !jobs.reexportToDirectory(source, pending.password, uri, pending.filename))
                   status.setText(
                       t(
                           "副本无法重新导出，请检查记录或当前作业。",
@@ -93,7 +93,7 @@ public final class NativeDataActivity extends AppCompatActivity {
               return;
             }
             pending.exportPrepared = false;
-            if (!jobs.export(pending.selection, uri, pending.filename, pending.rescue))
+            if (!jobs.exportToDirectory(pending.selection, uri, pending.filename, pending.rescue))
               status.setText(
                   t(
                       "已有任务或无法创建私有作业，请检查状态。",
@@ -239,7 +239,7 @@ public final class NativeDataActivity extends AppCompatActivity {
       export.setTextColor(
           androidx.core.content.ContextCompat.getColorStateList(this, R.color.button_primary_text));
     }
-    if (!exportOnly && !restoreOnly && !backupMode)
+    if (!restoreOnly)
       button(t("只读救援导出", "Read-only rescue export"), () -> chooseExport(true, null));
     if (!exportOnly) {
       Button restore =
@@ -605,18 +605,23 @@ public final class NativeDataActivity extends AppCompatActivity {
             : t(
                 "将停止 Web、终端和写入任务后建立快照，导出无需密码的 tar.gz 备份。",
                 "Web, terminals and write tasks stop before the snapshot. The tar.gz backup needs no password.");
+    message +=
+        "\n\n"
+            + t(
+                "请选择手机本地文件夹，例如 Downloads 下自建的备份文件夹。保存位置不支持安全写入时会停止；已验证的私有副本可通过“重新导出已验证副本”重试。本机副本不保证卸载后保留。",
+                "Choose a local phone folder, such as a backup folder you create in Downloads. Export stops if the location does not support safe writing. Retry the verified private copy with “Export a verified copy again”. Local copies are not guaranteed to survive uninstalling the app.");
     new DshaDialogBuilder(this)
         .setTitle(rescue ? t("救援导出", "Rescue export") : t("数据导出", "Data export"))
         .setMessage(message)
         .setPositiveButton(
-            t("选择保存位置", "Choose destination"),
+            t("选择保存文件夹", "Choose destination folder"),
             (dialog, which) -> {
               pending.clear();
               pending.selection = retained == null ? selection() : retained;
               pending.rescue = rescue;
               pending.filename = com.deepseekharness.app.util.BackupFileNames.portableName();
               pending.exportPrepared = true;
-              destination.launch(pending.filename);
+              destination.launch(null);
             })
         .setNegativeButton(t("取消", "Cancel"), null)
         .show();
@@ -637,7 +642,7 @@ public final class NativeDataActivity extends AppCompatActivity {
       pending.clear();
       pending.reexportId = copy.id;
       pending.filename = com.deepseekharness.app.util.BackupFileNames.portableName();
-      destination.launch(pending.filename);
+      destination.launch(null);
       return;
     }
     LinearLayout content = new LinearLayout(this);
@@ -681,7 +686,7 @@ public final class NativeDataActivity extends AppCompatActivity {
                       pending.filename =
                           com.deepseekharness.app.util.BackupFileNames.portableName();
                       dialog.dismiss();
-                      destination.launch(pending.filename);
+                      destination.launch(null);
                     }));
     dialog.setOnDismissListener(ignored -> original.getText().clear());
     dialog.show();
@@ -940,6 +945,13 @@ public final class NativeDataActivity extends AppCompatActivity {
                                                         "中断的提交已恢复一致状态，原件保留。",
                                                         "The interrupted commit is consistent again; originals were retained.")
                                                     : stage(value.stage);
+    if (value.result.equals("OUTPUT_POSSIBLE_PARTIAL"))
+      result =
+          stage(value.stage)
+              + "\n"
+              + t(
+                  "保存位置中可能留下未完成文件，应用不会自动删除它。请手动检查；已验证的私有副本可重新导出。",
+                  "The destination may contain an incomplete file. The app will not delete it automatically. Inspect it manually; the verified private copy can be exported again.");
     String projection = com.deepseekharness.app.data.PortableSettings.errorCode(this);
     status.setText(
         com.deepseekharness.app.util.UiText.format(
@@ -952,6 +964,34 @@ public final class NativeDataActivity extends AppCompatActivity {
   }
 
   private String errorText(String code) {
+    if (code.equals("DUPLICATE_PATH") || code.startsWith("DUPLICATE_PATH:"))
+      return t(
+              "所选数据含大小写或 Unicode 归一后重名的不同路径，当前备份格式无法无损表示。未导出，也未合并或丢弃文件；可导出不含该根的其他范围，并保留以下定位标识。",
+              "Selected data contains distinct paths that collide after case or Unicode normalization. This backup format cannot represent them without loss. Nothing was exported, merged, or omitted. Export another scope without that root and retain the diagnostic identity below.")
+          + "\n"
+          + t("错误代码：", "Error code: ")
+          + code;
+    if (code.equals("SOURCE_NOT_DIRECTORY") || code.startsWith("SOURCE_NOT_DIRECTORY:"))
+      return t(
+              "数据源的中间路径不是目录。未导出，文件保持原位；请根据以下定位标识检查该根。",
+              "An intermediate source path is not a directory. Nothing was exported and files stayed in place. Check that root using the diagnostic identity below.")
+          + "\n"
+          + t("错误代码：", "Error code: ")
+          + code;
+    if (Set.of(
+            "SAF_OBJECT_IDENTITY_UNAVAILABLE",
+            "SAF_OUTPUT_UNSUPPORTED",
+            "SAF_OUTPUT_OBJECT_CHANGED",
+            "SAF_OUTPUT_RANGE_UNCONFIRMED",
+            "SAF_DOCUMENT_SCOPE_UNCONFIRMED",
+            "EXPORT_DIRECTORY")
+        .contains(code))
+      return t(
+              "保存位置不支持安全写入，或所选对象已变化。请选择手机本地文件夹，例如 Downloads 下自建的备份文件夹；已验证的私有副本可通过“重新导出已验证副本”重试。本机副本不保证卸载后保留。",
+              "The location does not support safe writing, or the selected object changed. Choose a local phone folder, such as a backup folder you create in Downloads. Retry with “Export a verified copy again”. Local copies are not guaranteed to survive uninstalling the app.")
+          + "\n"
+          + t("错误代码：", "Error code: ")
+          + code;
     String message;
     switch (code) {
       case "ORIGINAL_BACKUP_PASSWORD_REQUIRED":

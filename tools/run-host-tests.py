@@ -5,18 +5,20 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+from source_snapshot import snapshot as complete_source_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "tools/host-tests.manifest.json"
 STAGES = ("fast", "runtime", "package", "windows", "linux")
 REQUIRES = {"node24", "python39", "powershell", "raw", "managed", "browser", "browser_react", "jdk17", "pnpm", "current_archive", "tar", "guide_fixture", "native_host", "generated_recovery", "mobile_upstream", "git_bash", "toolchains", "debug_classes", "linux_node", "linux_publish_packages", "semver_reference"}
-TOKENS = {"apks", "fixture", "posixFixture", "modules", "managedModules", "managedStorageModule", "raw", "managed", "rawSemver", "rawConversationModule", "reactReference", "pnpmCli", "runtimeArchive", "recoveryAssets", "mobileUpstream", "guideFixture", "toolchainRoot", "sdk", "gradleCache", "gradleHome", "jdk", "flavor", "linuxPublisher", "linuxHost", "linuxNativeInputs", "wslDistro", "linuxTempdir"}
+TOKENS = {"apks", "fixture", "posixFixture", "modules", "managedModules", "managedStorageModule", "raw", "managed", "rawSemver", "rawConversationModule", "reactReference", "pnpmCli", "runtimeArchive", "recoveryAssets", "mobileUpstream", "guideFixture", "toolchainRoot", "sdk", "gradleCache", "gradleHome", "jdk", "flavor", "linuxPublisher", "linuxHost", "linuxNativeInputs", "wslDistro", "linuxTempdir", "robolectricCache"}
 
 
 def load_manifest():
@@ -74,6 +76,57 @@ def required_directory(path, description):
     return path
 
 
+def source_snapshot():
+    return complete_source_snapshot(ROOT)
+
+
+def linux_path(value,distro):
+    if os.name!='nt':return str(Path(value).resolve())
+    path=subprocess.check_output(['wsl.exe','-d',distro,'--exec','wslpath','-u',Path(value).resolve().as_posix()],
+                                 stderr=subprocess.PIPE,timeout=15).decode('utf8',errors='strict').strip()
+    if not path or '\n' in path or not PurePosixPath(path).is_absolute() or '..' in PurePosixPath(path).parts:
+        raise ValueError('HOST_WSL_PATH_INVALID')
+    return path
+
+
+def linux_argument(value,distro):
+    return linux_path(value,distro) if os.name=='nt' and re.match(r'^(?:[A-Za-z]:[\\/]|\\\\)',value) else value
+
+
+def linux_command(inputs,row,path,args,fixture,values):
+    distro=inputs.args.wsl_distro
+    if not distro and os.name=='nt':raise ValueError('HOST_WSL_DISTRO_REQUIRED')
+    temporary=inputs.args.linux_tempdir or '/tmp'
+    if not PurePosixPath(temporary).is_absolute() or '..' in PurePosixPath(temporary).parts:
+        raise ValueError('HOST_LINUX_TMPDIR_INVALID')
+    home=fixture/'home';npmrc=fixture/'empty.npmrc'
+    env=inputs.environment(fixture,row,values)
+    settings=['TMPDIR='+temporary,'HOME='+linux_path(home,distro),
+              'USERPROFILE='+linux_path(home,distro),'PYTHONUTF8=1','PYTHONIOENCODING=utf-8',
+              'NPM_CONFIG_USERCONFIG='+linux_path(npmrc,distro),'DSHA_PYTHON=python3']
+    for key in ('DSHA_TEST_RUNTIME','DSHA_TEST_MANAGED_RUNTIME'):
+        if key in env:settings.append(key+'='+linux_argument(env[key],distro))
+    for key,value in row.get('environment',{}).items():
+        settings.append(key+'='+linux_argument(resolve(value,values),distro))
+    if path.suffix=='.py':
+        interpreter=['python3','-B']
+    elif path.suffix in ('.mjs','.cjs'):
+        if not inputs.args.linux_host:raise ValueError('HOST_LINUX_INPUT_REQUIRED: pass --linux-host')
+        host=required_directory(inputs.args.linux_host,'HOST_LINUX_INPUT_MISSING')
+        required_file(host/'node','HOST_LINUX_NODE_MISSING')
+        settings.append('LD_LIBRARY_PATH='+linux_path(host,distro))
+        interpreter=[linux_path(host/'node',distro)]
+        if 'linux_publish_packages' in row.get('requires',[]):
+            publisher=required_file(host/'node_modules/dsha-runtime-fs/index.js','HOST_LINUX_PUBLISHER_MISSING')
+            if hashlib.sha256(publisher.read_bytes()).digest()!=hashlib.sha256((ROOT/'app/src/main/assets/runtime-fs/index.js').read_bytes()).digest():
+                raise ValueError('HOST_LINUX_PUBLISHER_STALE')
+    else:raise ValueError('HOST_LINUX_SCRIPT_TYPE')
+    command=['env',*settings,*interpreter,linux_path(path,distro),
+             *(linux_argument(value,distro) for value in args)]
+    if os.name=='nt':command=['wsl.exe','-d',distro,'--exec',*command]
+    return command,env
+
+
 class Inputs:
     def __init__(self, args):
         self.args = args
@@ -121,11 +174,13 @@ class Inputs:
         req = set(row.get("requires", []))
         if row.get("platform")==["windows"] and os.name!="nt":raise ValueError("HOST_WINDOWS_PLATFORM_REQUIRED")
         if row.get("platform")==["linux"] and sys.platform!="linux":
-            if not (row.get("executor")=="linux" and os.name=="nt" and self.args.linux_host):
+            if not (row.get("executor")=="linux" and os.name=="nt" and self.args.wsl_distro):
                 raise ValueError("HOST_LINUX_PLATFORM_REQUIRED")
-        values = {"fixture": str(fixture), "posixFixture": "/" + fixture.as_posix().split(":", 1)[1].lstrip("/") if os.name == "nt" else str(fixture), "flavor": self.args.flavor,
+        posix=linux_path(fixture,self.args.wsl_distro) if row.get('executor')=='linux' else "/"+fixture.as_posix().split(':',1)[1].lstrip('/') if os.name=='nt' else str(fixture)
+        values = {"fixture": str(fixture), "posixFixture": posix, "flavor": self.args.flavor,
                   "runtimeArchive": str(ROOT / "app/src/main/assets/dsh-runtime.bin"), "recoveryAssets": str(ROOT / "app/build/generated/recoveryAssets"),
-                  "mobileUpstream": str(Path(self.args.mobile_upstream).resolve())}
+                  "mobileUpstream": str(Path(self.args.mobile_upstream).resolve()),
+                  "robolectricCache": str(Path(self.original.get("USERPROFILE") or self.original.get("HOME", "")) / ".m2/repository/org/robolectric/android-all-instrumented")}
         if "node24" in req:
             self.node=executable(self.node)
             if self.native is None:
@@ -208,7 +263,7 @@ class Inputs:
             host=required_directory(self.args.linux_host,"HOST_LINUX_INPUT_MISSING")
             required_file(host/"node","HOST_LINUX_NODE_MISSING")
             values.update(linuxHost=str(host), linuxNativeInputs=str(Path(self.args.linux_native_inputs).resolve()),
-                          wslDistro=self.args.wsl_distro, linuxTempdir=self.args.linux_tempdir or "/dev/shm")
+                          wslDistro=self.args.wsl_distro, linuxTempdir=self.args.linux_tempdir or "/tmp")
             values["linuxPublisher"]=str(required_file(host/"node_modules/dsha-runtime-fs/index.js","HOST_LINUX_PUBLISHER_MISSING"))
             provenance=json.loads(required_file(host/"native-provenance.json","HOST_LINUX_NATIVE_PROOF_MISSING").read_text(encoding="utf-8"))
             expected={"@deepseek-ai/node-addon-system","@deepseek-ai/node-addon-system-linux-x64","koffi","@koromix/koffi-linux-x64"}
@@ -236,7 +291,7 @@ class Inputs:
         env["PATH"] = os.pathsep.join(prefixes + [env.get("PATH", "")])
         if "raw" in values: env["DSHA_TEST_RUNTIME"] = values["raw"]
         if "managed" in values: env["DSHA_TEST_MANAGED_RUNTIME"] = values["managed"]
-        if row.get("executor")=="linux":
+        if row.get("executor")=="linux" and self.args.linux_host:
             env["LD_LIBRARY_PATH"]=str(Path(self.args.linux_host).resolve())
         if "browser" in row.get("requires", []):
             env.update(DSHA_PLAYWRIGHT=str(self.playwright), PLAYWRIGHT_BROWSERS_PATH=str(self.browsers))
@@ -271,21 +326,7 @@ def run_one(inputs, row, output):
                 else: args.append(resolve(value, values))
             path = ROOT / row["path"]
             if row.get("executor") == "linux":
-                if not inputs.args.linux_host: raise ValueError("HOST_LINUX_INPUT_REQUIRED: pass --linux-host")
-                host = Path(inputs.args.linux_host).resolve(); required_file(host / "node", "HOST_LINUX_NODE_MISSING")
-                publisher = host / "node_modules/dsha-runtime-fs/index.js"; required_file(publisher, "HOST_LINUX_PUBLISHER_MISSING")
-                if hashlib.sha256(publisher.read_bytes()).digest() != hashlib.sha256((ROOT / "app/src/main/assets/runtime-fs/index.js").read_bytes()).digest(): raise ValueError("HOST_LINUX_PUBLISHER_STALE")
-                def lx(p):
-                    p=Path(p).resolve();return "/mnt/host/"+p.drive[0].lower()+p.as_posix().split(":",1)[1] if os.name=="nt" else str(p)
-                linux_environment = ["LD_LIBRARY_PATH="+lx(host)]
-                linux_tmp = getattr(inputs.args, "linux_tempdir", None)
-                if linux_tmp:
-                    from pathlib import PurePosixPath
-                    if not PurePosixPath(linux_tmp).is_absolute() or ".." in PurePosixPath(linux_tmp).parts:
-                        raise ValueError("HOST_LINUX_TMPDIR_INVALID")
-                    linux_environment.append("TMPDIR="+linux_tmp)
-                command = ["wsl.exe", "-d", inputs.args.wsl_distro, "--", "env", *linux_environment, lx(host/"node"), lx(path), lx(publisher)] if os.name=="nt" else ["env",*linux_environment,str(host/"node"),str(path),str(publisher)]
-                env = inputs.environment(fixture, row, {})
+                command,env=linux_command(inputs,row,path,args,fixture,values)
             else:
                 command = [inputs.python,"-B"] if path.suffix==".py" else [inputs.node] if path.suffix in (".mjs",".cjs") else [executable(inputs.args.powershell),"-NoProfile","-File"]
                 command += [str(path)] + args;env=inputs.environment(fixture,row,values)
@@ -324,7 +365,11 @@ def main():
     known={Path(row["path"]).name for row in selected}
     if set(args.only)-known:parser.error("未匹配已选当前阶段测试: "+str(sorted(set(args.only)-known)))
     output=args.output.resolve();output.mkdir(parents=True,exist_ok=True)
+    initial_sources=source_snapshot()
+    source_file=output/'source-sha256.json'
+    source_file.write_text(json.dumps(initial_sources,ensure_ascii=False,sort_keys=True,indent=2)+'\n',encoding='utf8',newline='\n')
     report={"schema":2,"requestedStage":args.stage,"selectedStages":sorted(stages),"status":"RUNNING","tests":[],"excluded":[{"path":row["path"],"stage":row["stage"],"reason":row["reason"]} for row in data["tests"] if row not in selected]}
+    report['sourceSnapshot']={'path':str(source_file),'sha256':hashlib.sha256(source_file.read_bytes()).hexdigest()}
     inputs=Inputs(args)
     try:
         for row in selected:
@@ -338,6 +383,13 @@ def main():
             for row in report["tests"]:
                 if row["status"] == "PASS" and row.get("fixtureBindings"):
                     row.update(status="FAILED_FIXTURE_INVALIDATED", childExitStatus="PASS")
+        final_sources=source_snapshot()
+        report['sourceVerification']={'status':'PASS_COMPLETE_BYTE_RECHECK' if final_sources==initial_sources else 'FAILED_SOURCE_CHANGED',
+                                     'files':len(final_sources)}
+        if final_sources!=initial_sources:
+            report['failures'].append('source-final-verification')
+            for row in report['tests']:
+                if row['status']=='PASS':row.update(status='FAILED_SOURCE_INVALIDATED',childExitStatus='PASS')
         report["status"]="FAILED" if report["failures"] else "PASS_FOR_SELECTED_STAGES"
         (output/"manifest.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n",encoding="utf-8",newline="\n")
     return 0 if report["status"]=="PASS_FOR_SELECTED_STAGES" else 1

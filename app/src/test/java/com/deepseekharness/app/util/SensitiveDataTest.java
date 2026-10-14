@@ -5,6 +5,24 @@ import static org.junit.Assert.*;
 
 public class SensitiveDataTest {
   @Test
+  public void namedCredentialsAndBasicAreMaskedWithoutMaskingIdentifiers() {
+    for (String key :
+        new String[] {"client_secret", "id_token", "private_key", "credential", "signature"}) {
+      assertFalse(
+          SensitiveData.redact("{\"" + key + "\":\"fixture-private-123\"}")
+              .contains("fixture-private-123"));
+      assertFalse(
+          SensitiveData.redact(
+                  "SERVICE_" + key.toUpperCase(java.util.Locale.ROOT) + "=fixture-private-123")
+              .contains("fixture-private-123"));
+    }
+    assertEquals("Basic ***", SensitiveData.redact("Basic Zml4dHVyZTpwYXNzd29yZA=="));
+    assertEquals("Bearer ***", SensitiveData.redact("Bearer fixture-private-123"));
+    String identifiers = "sha256=" + "a".repeat(64) + " code=HTTP_503 sessionId=fixture-session";
+    assertEquals(identifiers, SensitiveData.redact(identifiers));
+  }
+
+  @Test
   public void removesCredentialsAcrossReportFormats() {
     for (String text :
         new String[] {

@@ -111,7 +111,6 @@
     <string name="ui2_environment_recovery">环境修复与恢复</string>
     <string name="ui2_environment_recovery_sub">查看启动依赖与中断维护</string>
     <string name="ui2_installation_log">检查与安装日志</string>
-    <string name="ui2_factory_reset">格式化并全新开始</string>
     <string name="ui2_legacy_hint">也可直接在模型配置中保存服务商凭据。</string>
     <string name="ui2_config_sub">修改后保存。端口与运行方式在下次启动生效。</string>
     <string name="ui2_models_full">服务商 · API Key · 地址 · 协议 · 模型目录</string>

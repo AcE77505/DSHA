@@ -4,7 +4,6 @@ import android.accessibilityservice.AccessibilityService;
 import android.graphics.Rect;
 import android.os.Bundle;
 import android.view.accessibility.AccessibilityNodeInfo;
-import android.view.accessibility.AccessibilityWindowInfo;
 import com.deepseekharness.app.util.AccessibilityDumpBounds;
 import org.json.*;
 import java.util.*;
@@ -14,6 +13,7 @@ public final class VirtualScreenAccessibility {
   private final Map<String, AccessibilityNodeInfo> nodes = new LinkedHashMap<>();
   private int treeDisplay = -1;
   private long treeAt;
+  private com.deepseekharness.app.util.ScreenTarget treeTarget;
 
   VirtualScreenAccessibility() {}
 
@@ -22,24 +22,73 @@ public final class VirtualScreenAccessibility {
     AccessibilityNodeInfo root = null, target = null;
     boolean[] submitted = {false};
     try {
+      if (operation.equals("tree")) clear();
       if (service == null) return fail("ACCESSIBILITY_UNAVAILABLE");
       if (android.os.Build.VERSION.SDK_INT < 30 || displayId <= 0) return fail("INVALID_DISPLAY");
       root = com.deepseekharness.app.DshaAccessibilityService.virtualRoot(displayId);
-      if (root == null) return fail("VIRTUAL_WINDOW_UNAVAILABLE");
+      if (root == null) {
+        clear();
+        return fail("VIRTUAL_WINDOW_UNAVAILABLE")
+            .put(
+                "treeUnavailable",
+                com.deepseekharness.app.DshaAccessibilityService.windowDiagnostic());
+      }
       com.deepseekharness.app.DshaAccessibilityService.validateActionRoot(displayId, root);
       if (operation.equals("tree")) {
-        clear();
-        treeDisplay = displayId;
-        treeAt = android.os.SystemClock.elapsedRealtime();
         JSONArray tree = new JSONArray();
-        walk(root, tree, 0);
-        JSONObject result = ok().put("nodes", tree);
-        if (tree.length() == 0) result.put("treeUnavailable", "EMPTY_ACCESSIBILITY_TREE");
+        var budget = new com.deepseekharness.app.util.AccessibilityTreeBudget();
+        walk(root, tree, 0, budget);
+        var identity =
+            new com.deepseekharness.app.util.ScreenTarget(
+                displayId,
+                root.getWindowId(),
+                root.getPackageName() == null ? "" : root.getPackageName().toString());
+        if (tree.length() == 0) {
+          // A single read-only refresh, still bound to the same display/window/package.
+          var refreshed =
+              com.deepseekharness.app.DshaAccessibilityService.refreshVirtualRoot(displayId, root);
+          root.recycle();
+          root = refreshed;
+          if (root != null) {
+            budget = new com.deepseekharness.app.util.AccessibilityTreeBudget();
+            walk(root, tree, 0, budget);
+          }
+        }
+        if (root == null) {
+          clear();
+          return fail("VIRTUAL_WINDOW_UNAVAILABLE")
+              .put("nodes", tree)
+              .put("treeUnavailable", "ROOT_REFRESH_UNAVAILABLE");
+        }
+        if (!com.deepseekharness.app.DshaAccessibilityService.matchesTarget(identity))
+          throw new com.deepseekharness.app.DshaAccessibilityService.TargetChangedException();
+        JSONObject result = ok().put("nodes", tree).put("visited", budget.visits());
+        if (budget.exhausted()) result.put("truncated", true);
+        if (tree.length() == 0) {
+          clear();
+          result.put(
+              "treeUnavailable",
+              root == null ? "ROOT_REFRESH_UNAVAILABLE" : "EMPTY_ACCESSIBILITY_TREE");
+        } else {
+          treeDisplay = displayId;
+          treeTarget = identity;
+          treeAt = android.os.SystemClock.elapsedRealtime();
+        }
         return result;
       }
       if (operation.equals("node")) {
-        if (displayId != treeDisplay || android.os.SystemClock.elapsedRealtime() - treeAt > 30000)
+        var current =
+            new com.deepseekharness.app.util.ScreenTarget(
+                displayId,
+                root.getWindowId(),
+                root.getPackageName() == null ? "" : root.getPackageName().toString());
+        if (displayId != treeDisplay
+            || treeTarget == null
+            || !treeTarget.matches(current)
+            || android.os.SystemClock.elapsedRealtime() - treeAt > 30000) {
+          clear();
           return fail("STALE_TREE");
+        }
         target = nodes.remove(args.optString("nodeId"));
         if (target == null || !target.refresh() || target.getWindowId() != root.getWindowId())
           return fail("STALE_NODE");
@@ -110,9 +159,11 @@ public final class VirtualScreenAccessibility {
       boolean selected = perform(target, submitted, AccessibilityNodeInfo.ACTION_SET_SELECTION, b);
       return ok().put("selectionApplied", selected);
     } catch (com.deepseekharness.app.DshaAccessibilityService.TargetChangedException rejected) {
+      clear();
       // 动作之前目标/运行状态就变了：动作没有落地，给调用方一个「未执行」的稳定码（#140）。
       return fail("SCREEN_TARGET_CHANGED");
     } catch (Throwable error) {
+      clear();
       JSONObject value = fail("ACCESSIBILITY_OPERATION_UNKNOWN");
       if (submitted[0])
         try {
@@ -140,10 +191,16 @@ public final class VirtualScreenAccessibility {
     for (var node : nodes.values()) node.recycle();
     nodes.clear();
     treeDisplay = -1;
+    treeTarget = null;
   }
 
-  private void walk(AccessibilityNodeInfo node, JSONArray tree, int depth) throws JSONException {
-    if (depth > 24 || tree.length() >= 200) return;
+  private void walk(
+      AccessibilityNodeInfo node,
+      JSONArray tree,
+      int depth,
+      com.deepseekharness.app.util.AccessibilityTreeBudget budget)
+      throws JSONException {
+    if (!budget.enter(depth, tree.length())) return;
     String text =
         node.isPassword() ? "" : String.valueOf(node.getText() == null ? "" : node.getText());
     String description =
@@ -168,12 +225,7 @@ public final class VirtualScreenAccessibility {
           new JSONObject()
               .put("nodeId", id)
               .put("text", text.substring(0, Math.min(text.length(), 1000)))
-              .put(
-                  "description",
-                  node.isPassword()
-                      ? ""
-                      : String.valueOf(
-                          node.getContentDescription() == null ? "" : node.getContentDescription()))
+              .put("description", description.substring(0, Math.min(description.length(), 1000)))
               .put("clickable", node.isClickable())
               .put("editable", node.isEditable())
               .put("scrollable", node.isScrollable())
@@ -181,11 +233,12 @@ public final class VirtualScreenAccessibility {
                   "bounds",
                   new JSONArray(new int[] {rect.left, rect.top, rect.right, rect.bottom})));
     }
-    for (int i = 0; i < node.getChildCount() && tree.length() < 200; i++) {
+    for (int i = 0; i < node.getChildCount() && budget.childSlot(tree.length()); i++) {
+      // Unreadable children also consume budget, so huge sparse child lists remain bounded.
       AccessibilityNodeInfo child = node.getChild(i);
       if (child != null)
         try {
-          walk(child, tree, depth + 1);
+          walk(child, tree, depth + 1, budget);
         } finally {
           child.recycle();
         }

@@ -74,4 +74,39 @@ public final class WebPageScripts {
       return "false";
     }
   }
+
+  public static org.json.JSONObject presentationBinding(
+      com.deepseekharness.app.util.BrowserThemeGate gate) {
+    var value = new org.json.JSONObject();
+    try {
+      value
+          .put("nonce", gate.nonce())
+          .put("generation", gate.identity().generation())
+          .put("instance", gate.identity().instanceId());
+    } catch (org.json.JSONException impossible) {
+      throw new IllegalStateException(impossible);
+    }
+    return value;
+  }
+
+  public static String presentation(
+      Context context, com.deepseekharness.app.util.BrowserThemeGate gate) {
+    return read(context, "web-integration/page.js")
+        + "\nwindow.__dshaNativePresentation.install("
+        + presentationBinding(gate).toString()
+        + ");";
+  }
+
+  public static org.json.JSONObject sessionRoute(
+      android.content.Intent intent, com.deepseekharness.app.util.BrowserThemeGate gate) {
+    var request = presentationBinding(gate);
+    try {
+      request
+          .put("sessionId", intent.getStringExtra(BrowserConversationRoute.SESSION))
+          .put("requestToken", intent.getStringExtra(BrowserConversationRoute.REQUEST));
+    } catch (org.json.JSONException impossible) {
+      throw new IllegalStateException(impossible);
+    }
+    return request;
+  }
 }

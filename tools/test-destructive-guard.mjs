@@ -9,7 +9,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { analyzeCommand } from '../app/src/main/assets/builtin-plugins/dsh-destructive-guard/lib/destructive.js';
+import { analyzeCommand, classifyCommand } from '../app/src/main/assets/builtin-plugins/dsh-destructive-guard/lib/destructive.js';
 import * as guard from '../app/src/main/assets/builtin-plugins/dsh-destructive-guard/lib/index.js';
 import { resolveEffectiveWorkdir } from '../app/src/main/assets/builtin-plugins/dsh-destructive-guard/lib/workdir.js';
 
@@ -254,14 +254,14 @@ for (const [command, why] of MUST_NOT_FLAG) {
 }
 console.log(`不误报：${quiet}/${MUST_NOT_FLAG.length}`);
 
-console.log('== 已知绕过（如实登记，不计入失败） ==');
+console.log('== 历史绕过必须批准（硬断言） ==');
 let bypassCaught = 0;
 for (const [command, why] of KNOWN_BYPASS) {
-  const result = analyze(command);
-  if (result.destructive) bypassCaught += 1;
-  console.log(`  ${result.destructive ? '命中' : '漏网'}  ${why}`);
+  const result = classifyCommand(command, {cwd:CWD, probe, sizeProbe:()=>10, glob, readFile});
+  if (check(result.requiresApproval, why)) bypassCaught += 1;
+  console.log(`  ${result.classification}  ${why}`);
 }
-console.log(`已知绕过命中：${bypassCaught}/${KNOWN_BYPASS.length}（漏网项就是必须写进文档的覆盖边界）`);
+console.log(`历史绕过批准覆盖：${bypassCaught}/${KNOWN_BYPASS.length}`);
 
 // #region 目标清单与计数（需求：弹窗要显示"删什么、几个"）
 
@@ -342,96 +342,15 @@ console.log('== 默认档位 ==');
 
 // #endregion
 
-// #region 真实 FS 与单调确认闸
-import assert from 'node:assert/strict';
-const fixtures = new URL('../app/build/', import.meta.url);
-const { fileURLToPath } = await import('node:url');
-const directory = mkdtempSync(join(fileURLToPath(fixtures), 'guard-unit-'));
-const posix = value => value.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/');
-const existing = join(directory, 'existing.txt');
-writeFileSync(existing, 'kept');
-function harness(outcome = 'allowed-once', policy = 'ask') {
-  let gate, finalGuard; const prompts = []; const environment = {};
-  const context = {
-    get: name => name === 'approval' ? { effectivePolicy: () => policy, request: async request => { prompts.push(request); return typeof outcome === 'function' ? outcome(request) : outcome; } }
-      : name === 'shellEnv' ? { collect: () => environment } : undefined,
-    inject: (_, callback) => callback({ tools: { guard: callback => { finalGuard = callback; return () => {}; } }, effect: callback => callback() }),
-    on: (_, handler) => { gate = handler; },
-  };
-  guard.apply(context);
-  const execution = (command, extra = {}) => ({ name: 'bash', callId: 'unit-call', arguments: { command, ...extra },
-    signal: new AbortController().signal, agent: { session: { header: { cwd: posix(directory) } } } });
-  return { context, prompts, environment, execution, gate: (...args) => gate(...args), final: exec => finalGuard(exec) };
-}
-try {
-  for (const outcome of ['allowed-once', 'rejected', 'cancelled', 'unavailable', 'rogue']) {
-    const h = harness(outcome); const exec = h.execution(`printf x > ${posix(existing)}`);
-    const result = await h.gate(exec, async () => ({ kind: 'allow' }));
-    assert.equal(result.kind, outcome === 'allowed-once' ? 'allow' : 'deny');
-    assert.equal(h.final(exec) === undefined, outcome === 'allowed-once');
-    assert(h.prompts[0].displayReason.zh.includes(posix(existing)));
-  }
-  const never = harness('allowed-once', 'never');
-  assert.equal((await never.gate(never.execution('rm x'), async () => ({ kind: 'allow' }))).kind, 'deny');
-  assert.equal(never.prompts.length, 0);
-  const h = harness();
-  const approved = h.execution('rm x'); await h.gate(approved, async () => ({ kind: 'allow' }));
-  assert.equal(h.final(approved), undefined);
-  assert(h.final(h.execution('rm x')), 'another exec cannot reuse the grant');
-  approved.arguments.command = 'rm y'; assert(h.final(approved), 'changed command cannot reuse the grant');
-  const noDirectory = h.execution('printf x > relative'); delete noDirectory.agent;
-  assert.equal((await h.gate(noDirectory, async () => ({ kind: 'allow' }))).kind, 'deny');
-  const cd = h.execution('cd other && printf x > existing.txt');
-  await h.gate(cd, async () => ({ kind: 'allow' }));
-  assert(h.prompts.at(-1).displayReason.zh.includes('数量未知'));
-  assert(!h.prompts.at(-1).displayReason.zh.includes('/existing.txt'));
-  const unknownCopy = analyze('cp a b', { cwdKnown: false, probe: null });
-  assert(unknownCopy.destructive && unknownCopy.unknownTargets);
-  const deniedProbe = analyze('printf x > existing', { probe: () => 'unknown' });
-  assert(deniedProbe.destructive && deniedProbe.unknownTargets);
-  const fs = await import('node:fs');
-  const { syncBuiltinESMExports } = await import('node:module');
-  const originalStat = fs.default.statSync;
-  try {
-    fs.default.statSync = () => { throw Object.assign(Error('fixture denied'), { code: 'EACCES' }); };
-    syncBuiltinESMExports();
-    const inaccessible = harness();
-    await inaccessible.gate(inaccessible.execution(`printf x > ${posix(existing)}`), async () => ({ kind: 'allow' }));
-    assert(inaccessible.prompts.at(-1).displayReason.zh.includes('数量未知'));
-  } finally { fs.default.statSync = originalStat; syncBuiltinESMExports(); }
-  const copyProbe = value => value === '/root/work/dest' ? 'dir' : value === '/root/work/dest/a' ? 'file' : 'missing';
-  assert(analyze('cp a dest', { probe: copyProbe }).destructive);
-  assert(analyze('mv a dest', { probe: copyProbe }).destructive);
-  assert(analyze('cp -t dest a', { probe: copyProbe }).destructive);
-  assert(analyze('cp --target-directory=dest a', { probe: copyProbe }).destructive);
-  assert(analyze('cp --parents a/b dest', { probe: copyProbe }).unknownTargets);
-  assert(!analyze('cp new dest', { probe: copyProbe }).destructive);
-  assert(analyze('A=/root/work/a; printf x > "$A"; A=/missing').destructive);
-  assert(analyze('cd other; printf x > "$PWD/existing.txt"').unknownTargets);
-  assert(analyze('cp -t dest dest', { probe: copyProbe }).destructive === false); // dest/dest does not exist
-  assert(analyze(': > $UNDEFINED_TARGET').unknownTargets);
-  assert(analyze('truncate -s 1 /tmp/log').destructive);
-  assert(!analyze('truncate -s 100 /tmp/log').destructive);
-  assert(analyze('truncate -s 100 /tmp/log', { sizeProbe: null }).destructive);
-  assert(analyze('git -c core.worktree=/actual reset --hard').targets.includes('/actual'));
-  assert(analyze("git -c alias.wipe='!rm -rf data' wipe").destructive);
-  assert(analyze('git clean -f', { env: { GIT_WORK_TREE: '/actual' } }).targets.includes('/actual'));
-  const git = analyze('git -C a -C b clean -fdx');
-  assert(git.targets.includes('/root/work/a/b'));
-  assert(analyze('git -C a --work-tree=../b clean -f').targets.includes('/root/work/b'));
-  assert(analyze('git --git-dir=.git clean -f').unknownTargets);
-  const env = harness(); env.environment.TARGET = posix(existing);
-  await env.gate(env.execution('printf x > "$TARGET"'), async () => ({ kind: 'allow' }));
-  assert(env.prompts.at(-1).displayReason.zh.includes(posix(existing)));
-  const changed = harness(() => { changed.environment.TARGET = 'changed'; return 'allowed-once'; });
-  changed.environment.TARGET = posix(existing);
-  assert.equal((await changed.gate(changed.execution('rm "$TARGET"'), async () => ({ kind: 'allow' }))).kind, 'deny');
-  for (let index = 0; index < 250; index++) writeFileSync(join(directory, `item-${index}`), 'x');
-  await h.gate(h.execution(`rm ${posix(directory)}/item-*`), async () => ({ kind: 'allow' }));
-  assert(h.prompts.at(-1).displayReason.zh.includes('至少 200'));
-  assert.equal(readFileSync(existing, 'utf8'), 'kept');
-} finally {
-  rmSync(directory, { recursive: true, force: true });
-}
+// Actual one-time approval and filesystem regression lives in test-destructive-guard-pipeline.mjs.
+for (const [command, reason] of KNOWN_BYPASS) check(classifyCommand(command, {cwd:CWD, probe, sizeProbe:()=>10, glob, readFile}).requiresApproval, 'historical bypass requires approval: '+reason);
+for (const command of [
+  'cat <<EOF\n$(python -c "opaque()")\nEOF', '/tmp/cat /tmp/file',
+  'env BASH_ENV=/tmp/hook cat /tmp/file', 'printf -v PATH /tmp',
+  "sed 'w /tmp/file' /tmp/input", 'find /tmp -exec helper {} +',
+  'git -c core.fsmonitor=helper status', 'git diff --output=/tmp/file',
+  'curl -K /tmp/config https://example.com', 'curl -X DELETE https://example.com',
+  'cat <$(helper)', 'rg --pre helper pattern /tmp',
+]) check(classifyCommand(command,{cwd:CWD,probe}).requiresApproval, 'opaque hidden execution/overwrite requires approval: '+command);
 if (failures > 0) throw Error(`${failures} pure logic assertions failed`);
-console.log(`PASS ${passed} original assertions + one-time monotonic guard / cwd / git / env / unknown / real FS cases`);
+console.log(`PASS ${passed} destructive classification and 16 mandatory historical approvals`);

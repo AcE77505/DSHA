@@ -13,7 +13,7 @@ public final class PluginInstallJournals {
 
   public static List<File> pending(BackupFileSystem fs, File home) throws IOException {
     File directory = new File(home, DIRECTORY);
-    verifyHistory(fs, home);
+    verifyHistory(fs, home, false);
     if (fs.stat(directory).type.equals("MISSING")) return Collections.emptyList();
     if (!fs.stat(directory).type.equals("DIRECTORY"))
       throw new IOException("PLUGIN_JOURNAL_DIRECTORY");
@@ -44,7 +44,8 @@ public final class PluginInstallJournals {
       throw new IOException("PLUGIN_JOURNAL_PLAN");
   }
 
-  private static void verifyHistory(BackupFileSystem fs, File home) throws IOException {
+  private static void verifyHistory(BackupFileSystem fs, File home, boolean persistProof)
+      throws IOException {
     File directory = new File(home, DIRECTORY),
         history = new File(directory, COMPLETED),
         proof = new File(directory, HISTORY_PROOF);
@@ -70,12 +71,12 @@ public final class PluginInstallJournals {
       if (!fs.stat(new File(directory, id)).type.equals("MISSING"))
         throw new IOException("PLUGIN_JOURNAL_DUPLICATE");
     }
-    CompletedHistory.write(fs, proof, "homeKey", homeKey, historyKey);
+    if (persistProof) CompletedHistory.write(fs, proof, "homeKey", homeKey, historyKey);
   }
 
   public static void archiveCompleted(BackupFileSystem fs, File home) throws IOException {
     File directory = new File(home, DIRECTORY), history = new File(directory, COMPLETED);
-    verifyHistory(fs, home);
+    verifyHistory(fs, home, true);
     if (fs.stat(directory).type.equals("MISSING")) return;
     for (String id : fs.list(directory)) {
       if (id.equals(COMPLETED) || id.equals(HISTORY_PROOF)) continue;
@@ -99,7 +100,7 @@ public final class PluginInstallJournals {
       fs.syncDirectory(history);
       if (!before.key.equals(fs.stat(target).key))
         throw new IOException("PLUGIN_JOURNAL_ARCHIVE_IDENTITY");
-      verifyHistory(fs, home);
+      verifyHistory(fs, home, true);
     }
   }
 

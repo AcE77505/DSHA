@@ -7,17 +7,15 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 容器运行时抽象：把「怎么进 rootfs 执行命令」独立出来，让 proot 与 proroot 并存、可切换。
+ * 容器运行时抽象：由冻结 EngineSpec 统一选择 bxroot 或 proot。
  *
- * <p>两条实现：
+ * <p>生产实现：
  * <ul>
- *   <li>{@link Proot} —— Termux 的 proot（APK 内置 libproot.so），默认稳定路径；</li>
- *   <li>{@link Proroot} —— coderredlab/proroot，LD_PRELOAD + 二进制补丁，零 ptrace 开销。</li>
+ *   <li>{@link BxrootRuntime} —— 固定的独立 Android ULX 闭包，默认路径；</li>
+ *   <li>{@link Proot} —— Termux proot，手动兼容及明确资格失败后的唯一自动兼容选择。</li>
  * </ul>
  *
- * <p>proroot 的 argv 里<b>没有</b> {@code --kill-on-exit}：{@code Process.destroy()} 只杀启动器，
- * 容器里的 node 会变孤儿继续跑 —— 所以「停止」必须按 pid 精确杀（见 {@code WebProcSel}），
- * 不能指望杀启动器传播信号。
+ * <p>两个引擎均由宿主 subreaper 证明 owned 树空及 launcher 退出；引擎退出码不能替代该屏障。
  */
 public interface ContainerRuntime {
 
@@ -39,7 +37,12 @@ public interface ContainerRuntime {
   void applyEnv(ProcessBuilder pb, File baseDir, File libDir, File tmpDir)
       throws java.io.IOException;
 
-  /** 首次使用前的准备。抛异常表示失败，调用方应回退。 */
+  default void applyEnv(ProcessBuilder pb, File baseDir, File libDir, File tmpDir, File rootfs)
+      throws java.io.IOException {
+    applyEnv(pb, baseDir, libDir, tmpDir);
+  }
+
+  /** 核对签名闭包。失败保留错误；只有隔离资格探针的明确拒绝可选择兼容引擎。 */
   void prepare() throws Exception;
 
   // ==================================================================
@@ -160,136 +163,48 @@ public interface ContainerRuntime {
     }
   }
 
-  /** coderredlab/proroot，LD_PRELOAD 路径翻译，零 ptrace。 */
+  /** 历史诊断名称保留；build172 不含可执行 proroot 实现。 */
+  @Deprecated
   class Proroot implements ContainerRuntime {
-    /** 五个 .so 都得在同一目录，启动器靠 /proc/self/exe 的 dirname 找同伴。 */
-    public static final String[] LIBS = {
-      "libproroot.so",
-      "libproroot-runtime.so",
-      "libproroot-linker.so",
-      "libproroot-stub-loader.so",
-      "libproroot-bridge.so",
-    };
+    public Proroot(Context context, File directory) {}
 
-    private final Context ctx;
-    private final File dir;
-    private final boolean staticLoader;
+    public Proroot(Context context, File directory, boolean staticLoader) {}
 
-    public Proroot(Context ctx, File dir) {
-      this(
-          ctx,
-          dir,
-          RuntimeHostPorts.fromOwner(ctx.getApplicationContext()).settings().staticLoader);
+    public static File defaultDir(Context context) {
+      return new File(context.getApplicationInfo().nativeLibraryDir);
     }
 
-    public Proroot(Context ctx, File dir, boolean staticLoader) {
-      this.ctx = ctx;
-      this.dir = dir;
-      this.staticLoader = staticLoader;
-    }
-
-    /**
-     * 存放目录：APK 的 jniLibs 提取目录（nativeLibraryDir）。
-     * <b>不能放 filesDir</b>：Android 10+ 的 W^X 策略不允许从应用可写目录执行代码。
-     */
-    public static File defaultDir(Context ctx) {
-      return new File(ctx.getApplicationInfo().nativeLibraryDir);
-    }
-
-    @Override
     public String id() {
       return "proroot";
     }
 
-    @Override
     public String displayName() {
-      return com.deepseekharness.app.util.UiText.text("proroot（实验，零 ptrace 开销）");
+      return "proroot (retired)";
     }
 
-    @Override
     public boolean available() {
-      for (String n : LIBS) {
-        File f = new File(dir, n);
-        if (!f.isFile() || f.length() == 0) return false;
-      }
-      return true;
+      return false;
     }
 
-    @Override
     public String unavailableReason() {
-      List<String> missing = new ArrayList<>();
-      for (String n : LIBS) {
-        File f = new File(dir, n);
-        if (!f.isFile() || f.length() == 0) missing.add(n);
-      }
-      if (missing.isEmpty()) return "";
-      return com.deepseekharness.app.util.UiText.format(
-          "缺 %s 个运行时文件（%s 等）", missing.size(), missing.get(0));
+      return "PROROOT_RETIRED";
     }
 
-    @Override
-    public List<String> baseArgv(File rootfsDir, boolean hardlinkSupported) {
-      return baseArgv(rootfsDir, hardlinkSupported, ctx.getFilesDir());
+    public void prepare() throws java.io.IOException {
+      throw new java.io.IOException("PROROOT_RETIRED");
     }
 
-    @Override
-    public List<String> baseArgv(File rootfsDir, boolean hardlinkSupported, File dataDomain) {
-      List<String> argv = new ArrayList<>();
-      argv.add(new File(dir, "libproroot.so").getAbsolutePath());
-      argv.add(staticLoader ? "--static-loader" : "--no-static-loader");
-      argv.add("-r");
-      argv.add(rootfsDir.getAbsolutePath());
-      argv.add("-0");
-      argv.add("-w");
-      argv.add("/root");
-      for (Bind b : binds()) {
-        if (!new File(b.host()).exists()) {
-          RuntimeHostPorts.fromOwner(ctx.getApplicationContext())
-              .record("BIND_SKIPPED", b.host() + ": missing or inaccessible");
-          continue;
-        }
-        argv.add("-b");
-        argv.add(b.host() + ":" + b.guest());
-      }
-      File shm = shmDir();
-      //noinspection ResultOfMethodCallIgnored
-      shm.mkdirs();
-      argv.add("-b");
-      argv.add(shm.getAbsolutePath() + ":/dev/shm");
-      argv.add("--link2symlink");
-      if (dataDomain != null) UserDataBindings.append(argv, rootfsDir, dataDomain);
-      return argv;
+    public List<String> baseArgv(File root, boolean links) {
+      throw new IllegalStateException("PROROOT_RETIRED");
     }
 
-    File shmDir() {
-      return new File(ctx.getCacheDir(), "shm");
+    public List<String> baseArgv(File root, boolean links, File domain) {
+      throw new IllegalStateException("PROROOT_RETIRED");
     }
 
-    @Override
-    public void applyEnv(ProcessBuilder pb, File baseDir, File libDir, File tmpDir) {
-      pb.environment().put("PROROOT_TMP_DIR", tmpDir.getAbsolutePath());
-      pb.environment()
-          .put("PROROOT_LIB_PATH", new File(dir, "libproroot-runtime.so").getAbsolutePath());
-      pb.environment()
-          .put("PROROOT_LINKER_PATH", new File(dir, "libproroot-linker.so").getAbsolutePath());
-      if (staticLoader)
-        pb.environment()
-            .put(
-                "PROROOT_STUB_LOADER",
-                new File(dir, "libproroot-stub-loader.so").getAbsolutePath());
-      else pb.environment().remove("PROROOT_STUB_LOADER");
-    }
-
-    @Override
-    public void prepare() throws Exception {
-      for (String n : LIBS) {
-        if (!new File(dir, n).isFile()) {
-          throw new IllegalStateException(
-              com.deepseekharness.app.util.UiText.format("proroot 运行时缺 %s", n));
-        }
-      }
-      //noinspection ResultOfMethodCallIgnored
-      shmDir().mkdirs();
+    public void applyEnv(ProcessBuilder builder, File base, File lib, File tmp)
+        throws java.io.IOException {
+      throw new java.io.IOException("PROROOT_RETIRED");
     }
   }
 

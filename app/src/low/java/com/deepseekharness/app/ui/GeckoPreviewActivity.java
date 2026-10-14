@@ -66,11 +66,7 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
       () ->
           runOnUiThread(
               () -> {
-                if (!isFinishing()
-                    && !isDestroyed()
-                    && getLifecycle()
-                        .getCurrentState()
-                        .isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) syncSession(false);
+                if (!isFinishing() && !isDestroyed()) syncSession(false);
               });
 
   private static final class PendingFileUpload {
@@ -127,6 +123,9 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
     boolean canGoBack;
     WebExtension.Port port;
     com.deepseekharness.app.util.StartupPageGate pageEvents;
+    com.deepseekharness.app.util.BrowserThemeGate themeGate;
+    Integer themeColor;
+    String routeRequestSent;
     PendingFileUpload pendingUpload;
     WebUploads.Session uploadSession;
     final PreviewPageSession page = new PreviewPageSession();
@@ -207,6 +206,7 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
     closeOriginRestorePreview = BrowserOriginRestore.registerPreview(this);
     controller = HarnessController.get(this);
     retained = new androidx.lifecycle.ViewModelProvider(this).get(Retained.class);
+    BrowserConversationRoute.register(this);
     previewAuth = new PreviewAuth(this);
     microphone = new BrowserMicrophone(this);
     downloads = new WebDownloads(this, saved);
@@ -217,6 +217,8 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
     container = findViewById(R.id.web_container);
     progress = findViewById(R.id.web_progress);
     errorPanel = findViewById(R.id.web_error_panel);
+    controller.addReadyWebPageListener(readyWebListener);
+    if (retained.themeColor != null) WebFullscreenUi.applyThemeColor(this, retained.themeColor);
     authUrl = getIntent().getStringExtra("url");
     PreviewPageSession.Identity current = controller.getReadyWebPageIdentity();
     if (current != null) authUrl = current.authUrl();
@@ -250,6 +252,10 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
               }
             });
     registerPicker(retained.chooser.pending());
+    if (!BrowserConversationRoute.current(getIntent(), controller.getReadyWebPageIdentity())) {
+      rejectConversationRoute();
+      return;
+    }
     if (baseUrl == null) {
       showError(
           com.deepseekharness.app.util.UiText.text("对话地址无效"),
@@ -267,6 +273,18 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
   private void syncSession(boolean retry) {
     if (retained == null || previewAuth == null || isFinishing() || isDestroyed()) return;
     PreviewPageSession.Identity current = controller.getReadyWebPageIdentity();
+    if (retained.page.identity() != null && !retained.page.isCurrent(current)) {
+      previewAuth.cancel();
+      pendingIdentity = null;
+      savedHistory = null;
+      savedIdentity = null;
+      if (session == null && retained.session != null) session = retained.session;
+      closeSession();
+      if (current == null || conversationHidden()) {
+        hideConversation();
+        return;
+      }
+    }
     if (current == null) {
       previewAuth.cancel();
       pendingIdentity = null;
@@ -274,17 +292,11 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
       if (microphoneDelegate != null) microphoneDelegate.cancelPending();
       backPending = false;
       backSequence++;
-      if (session == null && retained.session != null && retained.page.identity() != null) {
-        savedHistory = null;
-        authUrl = retained.page.identity().authUrl();
-        startupGeneration = retained.page.identity().generation();
-        baseUrl = WebPreviewPolicy.loopbackBaseUrl(authUrl);
-        load();
-      }
       progress.setVisibility(View.VISIBLE);
       refreshPictureInPicture();
       return;
     }
+    if (conversationHidden()) return;
     if (!retry && retained.session != null && retained.page.isCurrent(current)) {
       authUrl = current.authUrl();
       baseUrl = WebPreviewPolicy.loopbackBaseUrl(authUrl);
@@ -292,7 +304,10 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
       if (session == null) {
         savedHistory = null;
         load();
-      } else resumePageStreams();
+      } else {
+        resumePageStreams();
+        initializePresentation();
+      }
       return;
     }
     if (previewAuth.busy() && current.equals(pendingIdentity)) return;
@@ -307,7 +322,7 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
     refreshPictureInPicture();
     previewAuth.refresh(
         (url, cookie, error) -> {
-          if (!current.equals(pendingIdentity)) return;
+          if (conversationHidden() || !current.equals(pendingIdentity)) return;
           pendingIdentity = null;
           if (!current.equals(controller.getReadyWebPageIdentity())) {
             syncSession(false);
@@ -321,6 +336,7 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
           if (session == null && retained.session != null) session = retained.session;
           closeSession();
           retained.page.claim(current);
+          BrowserConversationRoute.register(this);
           authUrl = url;
           baseUrl = WebPreviewPolicy.loopbackBaseUrl(url);
           startupGeneration = current.generation();
@@ -462,9 +478,17 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
             @Override
             public void onPageStart(GeckoSession s, String url) {
               if (!pageCurrent(s, pageIdentity)) return;
+              if (pagePort != null) {
+                pagePort.setDelegate(null);
+                pagePort.disconnect();
+                pagePort = null;
+                retained.port = null;
+              }
               cancelFilePrompt();
               if (microphoneDelegate != null) microphoneDelegate.cancelPending();
               retained.documentUrl = url;
+              retained.themeGate = null;
+              retained.routeRequestSent = null;
               retained.ready = false;
               refreshPictureInPicture();
               progress.setProgress(0);
@@ -482,7 +506,10 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
               if (!pageCurrent(s, pageIdentity)) return;
               retained.ready = success;
               refreshPictureInPicture();
-              if (success) resumePageStreams();
+              if (success) {
+                resumePageStreams();
+                initializePresentation();
+              }
               progress.setVisibility(View.GONE);
               if (!success)
                 showError(
@@ -836,6 +863,9 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
                 }
                 retained.port = port;
                 pagePort = port;
+                if (retained.themeGate == null || !retained.themeGate.owns(port))
+                  retained.themeGate =
+                      new com.deepseekharness.app.util.BrowserThemeGate(port, pageIdentity);
                 if (retained.pageEvents == null || !retained.pageEvents.owns(port))
                   retained.pageEvents =
                       new com.deepseekharness.app.util.StartupPageGate(
@@ -853,6 +883,10 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
                             || !WebPreviewPolicy.sameService(baseUrl, retained.documentUrl)
                             || !(message instanceof org.json.JSONObject)) return;
                         org.json.JSONObject value = (org.json.JSONObject) message;
+                        if ("presentation".equals(value.optString("type"))) {
+                          receivePresentation(source, value.optJSONObject("report"));
+                          return;
+                        }
                         if ("language-selected".equals(value.optString("type"))) {
                           LanguageController.select(
                               GeckoPreviewActivity.this, value.optString("language"));
@@ -931,6 +965,7 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
                 } catch (org.json.JSONException ignored) {
                 }
                 resumePageStreams();
+                initializePresentation();
               }
             },
             "dsha");
@@ -971,6 +1006,7 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
   }
 
   private void closeSession() {
+    WebFullscreenUi.applyThemeColor(this, getColor(R.color.surface));
     if (microphoneDelegate != null) {
       microphoneDelegate.close();
       microphoneDelegate = null;
@@ -998,6 +1034,9 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
       retained.canGoBack = false;
       retained.needsStreamResume = false;
       retained.pageEvents = null;
+      retained.themeGate = null;
+      retained.themeColor = null;
+      retained.routeRequestSent = null;
       retained.navigation.cancel();
       retained.page.clear();
     }
@@ -1030,7 +1069,7 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
 
   @Override
   protected void onStop() {
-    if (controller != null) controller.removeReadyWebPageListener(readyWebListener);
+    if (retained != null) retained.routeRequestSent = null;
     if (microphoneDelegate != null) microphoneDelegate.cancelPending();
     if (!pictureInPictureActiveOrTransitioning() && session != null) {
       retained.needsStreamResume = true;
@@ -1040,9 +1079,24 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
   }
 
   @Override
+  protected void cancelConversationRequests() {
+    pendingIdentity = null;
+    if (previewAuth != null) previewAuth.cancel();
+    if (retained != null) retained.routeRequestSent = null;
+    if (pagePort != null)
+      try {
+        pagePort.postMessage(new org.json.JSONObject().put("type", "presentation-cancel"));
+      } catch (org.json.JSONException | RuntimeException ignored) {
+      }
+    if (getIntent() != null) {
+      getIntent().removeExtra(BrowserConversationRoute.REQUEST);
+      getIntent().removeExtra(BrowserConversationRoute.SESSION);
+    }
+  }
+
+  @Override
   protected void onStart() {
     super.onStart();
-    if (controller != null) controller.addReadyWebPageListener(readyWebListener);
     if (!pictureInPictureActiveOrTransitioning() && session != null) session.setActive(true);
     syncSession(false);
   }
@@ -1051,6 +1105,11 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
   protected void onNewIntent(Intent intent) {
     super.onNewIntent(intent);
     setIntent(intent);
+    if (!BrowserConversationRoute.current(intent, controller.getReadyWebPageIdentity())) {
+      rejectConversationRoute();
+      return;
+    }
+    retained.routeRequestSent = null;
     syncSession(false);
   }
 
@@ -1070,6 +1129,97 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
       } catch (org.json.JSONException ignored) {
       }
     resumePageStreams();
+    initializePresentation();
+  }
+
+  private void rejectConversationRoute() {
+    Toast.makeText(
+            this,
+            com.deepseekharness.app.util.UiText.choose(
+                "这条任务所属的聊天实例已结束，请从启动页重新进入。",
+                "This task's chat instance has ended. Open the workspace from the start page."),
+            Toast.LENGTH_LONG)
+        .show();
+    hideConversation();
+  }
+
+  private void initializePresentation() {
+    if (retained == null
+        || pagePort == null
+        || !retained.ready
+        || conversationHidden()
+        || !retained.page.isCurrent(controller.getReadyWebPageIdentity())
+        || !WebPreviewPolicy.sameService(baseUrl, retained.documentUrl)) return;
+    if (retained.themeGate == null || !retained.themeGate.owns(pagePort))
+      retained.themeGate =
+          new com.deepseekharness.app.util.BrowserThemeGate(pagePort, retained.page.identity());
+    try {
+      pagePort.postMessage(
+          new org.json.JSONObject()
+              .put("type", "presentation-init")
+              .put("binding", WebPageScripts.presentationBinding(retained.themeGate)));
+      String token = getIntent().getStringExtra(BrowserConversationRoute.REQUEST);
+      String id = getIntent().getStringExtra(BrowserConversationRoute.SESSION);
+      if (token != null
+          && !token.equals(retained.routeRequestSent)
+          && id != null
+          && !id.isEmpty()
+          && id.length() <= 512
+          && BrowserConversationRoute.current(getIntent(), controller.getReadyWebPageIdentity())) {
+        retained.routeRequestSent = token;
+        pagePort.postMessage(
+            new org.json.JSONObject()
+                .put("type", "session-route")
+                .put("request", WebPageScripts.sessionRoute(getIntent(), retained.themeGate)));
+      }
+    } catch (org.json.JSONException ignored) {
+    }
+  }
+
+  private void receivePresentation(WebExtension.Port source, org.json.JSONObject value) {
+    if (value == null
+        || value.toString().length() > 2048
+        || retained.themeGate == null
+        || conversationHidden()
+        || source != pagePort) return;
+    if (!retained.themeGate.accept(
+        source,
+        controller.getReadyWebPageIdentity(),
+        value.optString("nonce"),
+        value.optLong("generation", -1),
+        value.optString("instance"),
+        value.optLong("sequence", -1),
+        source.sender.isTopLevel(),
+        retained.documentUrl)) return;
+    if ("theme-color".equals(value.optString("type"))) {
+      Integer color =
+          com.deepseekharness.app.util.BrowserThemeColor.parse(
+              value.optString("color"), getColor(R.color.surface));
+      if (color != null) {
+        retained.themeColor = color;
+        WebFullscreenUi.applyThemeColor(this, color);
+      }
+    } else if ("session-route".equals(value.optString("type"))
+        && value.optString("requestToken").equals(retained.routeRequestSent)
+        && value
+            .optString("sessionId")
+            .equals(getIntent().getStringExtra(BrowserConversationRoute.SESSION))) {
+      if (!"opened".equals(value.optString("status")))
+        Toast.makeText(
+                this,
+                com.deepseekharness.app.util.UiText.choose(
+                    "无法打开该任务的会话，当前聊天已保留。",
+                    "The task's session could not be opened. Your current chat was kept."),
+                Toast.LENGTH_LONG)
+            .show();
+      for (String key :
+          new String[] {
+            BrowserConversationRoute.REQUEST,
+            BrowserConversationRoute.SESSION,
+            BrowserConversationRoute.GENERATION,
+            BrowserConversationRoute.INSTANCE
+          }) getIntent().removeExtra(key);
+    }
   }
 
   private void resumePageStreams() {
@@ -1091,6 +1241,7 @@ public final class GeckoPreviewActivity extends PictureInPictureActivity
 
   @Override
   protected void onDestroy() {
+    BrowserConversationRoute.unregister(this);
     backPending = false;
     backSequence++;
     if (controller != null) controller.removeReadyWebPageListener(readyWebListener);

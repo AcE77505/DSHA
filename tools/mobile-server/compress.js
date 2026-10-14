@@ -232,3 +232,4 @@ export function installResponseCompression({ matches = () => true } = {}) {
         if (proto.flushHeaders === patchedFlushHeaders) proto.flushHeaders = origFlushHeaders;
     };
 }
+//# sourceMappingURL=compress.js.map

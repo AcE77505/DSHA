@@ -21,7 +21,7 @@
 
 > 🤖 下一个 AI / 开发者请先读 **[AGENTS.md](AGENTS.md)**（项目结构、启动契约、踩过的坑），不要先全库扫描。
 
-> 本地整合 build171 使用 `dsha-0.2.0-rc2.1[low].apk`，未上传、未做真机验收；见[本地报告](docs/releases/v0.2.22-build171-20261013.md)。下方已发布下载链接仍对应 build170。
+> 当前仓库已同步 build173 源码：bxroot 迁移、移动 UI 3.1.0、外置工作区保护、导出和画中画恢复修复，见[源码更新说明](docs/source-updates/build173.md)。本轮仅更新源码和 Star History；下方已发布 APK 下载仍为 build170。兼容版设备验收继续暂缓。
 
 ## ❤️ 赞助商
 
@@ -103,7 +103,7 @@ SELinux 挡住、沙箱起不来、前端按桌面布局排版。
 |---|---|
 | 🚫 **零命令行门槛** | 内置离线 Ubuntu rootfs，APK 装完就能用。不装 Termux、不配 pkg、不敲命令 |
 | 🐧 **完整 glibc 环境** | 不是裁剪版：`apt` / PTY / 原生模块 / Python / git 都在。上游插件不用改就能跑 |
-| ⚡ **proroot 零 ptrace 开销** | 传统 proot 每个系统调用两次上下文切换；proroot 走 LD_PRELOAD + 二进制补丁做进程内路径翻译。真机实测关键项合计 **+58%** |
+| ⚙️ **bxroot / proot** | bxroot 优先，proot 兼容；实际 Android 性能与兼容性须按新版本设备证据判断 |
 | 🔌 **手机就是 agent 的手** | 无障碍 + ADB 免 Shizuku 直连 + 独立虚拟屏：读屏、点按、装应用、跑自动化，全部内置 |
 | 💾 **导出后迁移数据** | “数据与备份”导出无需密码的 `.tar.gz`；数据位置可在存储指南查看，本机副本不保证卸载后存续 |
 | 🩺 **坏了能自己说清哪坏了** | 组件级自检 + 按需修补 + 启动诊断 + 独立应急 DSH；Web 起不来时直接点名是哪个插件 |
@@ -128,9 +128,9 @@ SELinux 挡住、沙箱起不来、前端按桌面布局排版。
 
 | 能力 | 说明 |
 |---|---|
-| proroot / proot 双运行时 | 默认稳定的 proot；可在“配置”选择 proroot，实际兼容结果依机型 |
-| 实测提升 | vivo V2352A / Android 14：关键项合计 +58%，tar 打包 +94%（备份走这条），stat 密集 +82%（node 模块解析） |
-| 有限兼容回退 | proroot 在鉴权前明确退出且无插件故障时，确认 guest 退出后仅重试一次 proot；慢启动不触发回退 |
+| bxroot / proot 双运行时 | 首次升级优先 bxroot；配置可显式选择 proot，实际兼容结果依机型 |
+| 性能证据 | 旧 proroot 的历史测速不能代表 bxroot；本轮未进行 Android 性能验收 |
+| 有限兼容回退 | bxroot 明确启动引擎失败、无插件故障或业务提交，确认后代树与 launcher 退出后仅重试一次 proot；未知结果不重放 |
 | Node.js 24 + pnpm 10 | 与上游一致的运行环境，随包锁版本 |
 | 分包更新 | Ubuntu 与 dsh 运行时在 APK 内分包；冷安装两份都解压，局部更新只读 dsh 包 |
 | 受管更新试运行 | 新环境先在隔离区真实启动、验证端口 / 鉴权 / 会话读写 / 插件加载，全过后才切换提交，失败自动回切 |
@@ -150,7 +150,7 @@ SELinux 挡住、沙箱起不来、前端按桌面布局排版。
 | 兼容旧备份 | 先完整认证/摘要核验再预检；未知或依赖不完整时如实提示。系统插件由当前 APK 重建，用户原件继续保留 |
 | 会话损坏隔离 | 坏掉的会话文件挪到 `corrupt-backup` 可取回，不让一个坏文件卡住整个 Web |
 | 覆盖更新自动清理 | 升级后闲时清理可再生缓存与多余旧副本；保留至少两份健康前代，改过的原件不动 |
-| 完整格式化 | 核心数据严格删除并复核；仅 WebView 缓存等可重建目录允许降级警告 |
+| 外置工作区保护 | 彻底重装与完整格式化已移除；维护只断开外置引用，保留其文件和备份 |
 
 ### ④ 设备能力（让 agent 真正操作这台手机）
 
@@ -183,7 +183,7 @@ agent 通过本机 `127.0.0.1:3090` 桥调用以下能力（token 门控，`/app
 | 能力 | 说明 |
 |---|---|
 | 双内核 | Standard 用系统 WebView；Low 内置 GeckoView 143，不受系统 WebView 版本拖累 |
-| 移动端适配 | 内置 [dsh-web-mobile](https://github.com/mexiaosqwq/dsh-web-mobile) **3.0.5**（MIT），保留手机快捷键和窄屏适配，修复焦点、弹窗及插件卡片 |
+| 移动端适配 | 内置 [dsh-web-mobile](https://github.com/mexiaosqwq/dsh-web-mobile) **3.1.0**（MIT），固定源码与保留差异均受摘要核验 |
 | 画中画 | 对话窗口支持 PiP 小窗悬浮 |
 | 高刷与省电 | 按用户刷新率上限请求高刷（实测 120 Hz 零掉帧）；空闲自动交还系统省电 |
 | 深浅色与多语言 | 深色 / 浅色 / 跟随系统；简体中文 / English，默认跟随系统语言 |
@@ -242,10 +242,10 @@ agent 通过本机 `127.0.0.1:3090` 桥调用以下能力（token 门控，`/app
 
 | | **容器派**（DSHA 走这条） | **Termux bootstrap 派** |
 |---|---|---|
-| 做法 | proot/proroot + 完整 glibc rootfs | 用 Termux 的包在 Android bionic 上裸跑 |
+| 做法 | bxroot/proot + 完整 glibc rootfs | 用 Termux 的包在 Android bionic 上裸跑 |
 | 装机 | 装 APK 就完事 | 装 Termux → 敲命令 → 装工具链 |
 | 环境 | 完整 Ubuntu，`apt` 与原生模块随便用 | 需要为 bionic 逐个打补丁 / 重编 |
-| 开销 | proroot 已无 ptrace 开销 | 无容器层，理论最快 |
+| 开销 | bxroot 的 Android 性能尚未重新验收 | 无容器层，理论最快 |
 | 沙箱 | 两边都受限 | 两边都受限 |
 
 ---
@@ -279,7 +279,7 @@ agent 通过本机 `127.0.0.1:3090` 桥调用以下能力（token 门控，`/app
 │  ├ LAN 代理 :3081 · ADB / Shizuku / Root 设备通道    │
 │  └ 悬浮条（TYPE_APPLICATION_OVERLAY）                │
 ├─────────────────────────────────────────────────────┤
-│ proot（默认）/ proroot（可选，依机型兼容）           │
+│ bxroot（优先）/ proot（兼容，依机型核验）           │
 ├─────────────────────────────────────────────────────┤
 │ Ubuntu 24.04 arm64 · Node.js 24 · pnpm 10           │
 │  └ @deepseek-ai/dsh  →  Web UI :auto                │
@@ -352,7 +352,7 @@ python tools/verify-stability.py             # 稳定性验收门禁
 ## 致谢
 
 - [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) —— 本体
-- [proot](https://github.com/termux/proot) / [proroot](https://github.com/coderredlab/proroot) —— 免 ROOT 容器（见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）
+- [bxroot](https://github.com/qiannianhuanxiang/bxroot) / [proot](https://github.com/termux/proot) —— 免 ROOT 容器（见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）
 - [Termux terminal-view / terminal-emulator](https://github.com/termux/termux-app)（Apache-2.0）—— PTY 终端
 - [dsh-web-mobile](https://github.com/mexiaosqwq/dsh-web-mobile) —— 内置移动端适配
 - [Shizuku](https://shizuku.rikka.app/) —— 备用设备命令通道
@@ -382,4 +382,4 @@ QQ 群 **975836806** (二群)—— 测试版、问题反馈、插件交流。
   </picture>
 </a>
 
-<sub>由 [`tools/gen-star-history.py`](tools/gen-star-history.py) 按周读取 GitHub 星标时间并更新（[workflow](.github/workflows/star-history.yml)）。浅色、深色 SVG 保存在本仓库；曲线按当前仍保留的星标汇总。</sub>
+<sub>由 [`tools/gen-star-history.py`](tools/gen-star-history.py) 每 12 小时读取 GitHub 星标时间并更新（[workflow](.github/workflows/star-history.yml)）。浅色、深色 SVG 保存在本仓库；曲线按当前仍保留的星标汇总。</sub>

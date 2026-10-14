@@ -97,6 +97,10 @@ public class HarnessController {
     return web.getReadyWebPageIdentity();
   }
 
+  public com.deepseekharness.app.util.AgentTaskRegistration.Snapshot getReadyTaskRegistration() {
+    return web.getReadyTaskRegistration();
+  }
+
   public void addReadyWebPageListener(Runnable listener) {
     web.addReadyWebPageListener(listener);
   }

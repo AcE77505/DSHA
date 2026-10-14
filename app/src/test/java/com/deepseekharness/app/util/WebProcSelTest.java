@@ -14,6 +14,32 @@ public class WebProcSelTest {
           + "/data/data/com.dsh.client/files/linux/ubuntu/usr/local/bin/node ";
 
   @Test
+  public void recognizesIndependentUlxPayloadAndNeverSupervisor() {
+    String[] argv = {
+      "/native/libbxroot-ulx.so",
+      "/data/rootfs/lib/ld-linux-aarch64.so.1",
+      "--argv0",
+      "node",
+      "--preload",
+      "/native/libbxroot-runtime.so",
+      "/data/rootfs/usr/local/bin/node",
+      "--expose-internals",
+      "/usr/local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js",
+      "web",
+      "--port",
+      "0"
+    };
+    String command = String.join("\u0000", argv);
+    assertTrue(WebProcSel.looksLikeWeb(command));
+    assertTrue(WebProcSel.maySignalWeb(command));
+    assertFalse(
+        WebProcSel.looksLikeWeb("/native/libbxroot.so -r /data/rootfs /usr/local/bin/dsh web"));
+    assertFalse(WebProcSel.looksLikeWeb("/native/libdsha-session.so -- /usr/local/bin/dsh web"));
+    argv[5] = "/native/libfake-runtime.so";
+    assertFalse(WebProcSel.looksLikeWeb(String.join("\u0000", argv)));
+  }
+
+  @Test
   public void recognizesOnlyProrootNodeWebPayload() {
     String command = BRIDGE + "/usr/local/bin/dsh web --no-open --host 127.0.0.1 --port 3080";
     assertTrue(WebProcSel.looksLikeWeb(command));

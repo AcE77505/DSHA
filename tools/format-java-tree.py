@@ -60,7 +60,8 @@ def inventory(root=ROOT, protected=(), generated=()):
     if fixtures.is_dir():
         for path in fixtures.rglob("*.java"):
             relative = path.relative_to(root).as_posix()
-            if EXCLUDED_PARTS.intersection(path.relative_to(fixtures).parts):
+            fixture_parts = path.relative_to(fixtures).parts
+            if EXCLUDED_PARTS.intersection(fixture_parts) or "build" in fixture_parts:
                 continue
             if relative in protected or relative in generated:
                 continue

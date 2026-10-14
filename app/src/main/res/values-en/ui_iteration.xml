@@ -111,7 +111,6 @@
     <string name="ui2_environment_recovery">Environment recovery</string>
     <string name="ui2_environment_recovery_sub">Inspect startup dependencies and interrupted maintenance</string>
     <string name="ui2_installation_log">Check and installation log</string>
-    <string name="ui2_factory_reset">Format and start fresh</string>
     <string name="ui2_legacy_hint">Provider credentials can also be saved in model settings.</string>
     <string name="ui2_config_sub">Save your changes. Port and runtime changes apply on the next start.</string>
     <string name="ui2_models_full">Providers · Credentials · Endpoint · Protocol · Models</string>

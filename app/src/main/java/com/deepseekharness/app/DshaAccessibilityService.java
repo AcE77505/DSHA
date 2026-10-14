@@ -273,33 +273,63 @@ public class DshaAccessibilityService extends AccessibilityService {
     }
   }
 
+  private static final ThreadLocal<String> WINDOW_DIAGNOSTIC = new ThreadLocal<>();
+
+  public static String windowDiagnostic() {
+    String value = WINDOW_DIAGNOSTIC.get();
+    return value == null ? "ROOT_UNAVAILABLE" : value;
+  }
+
   private static AccessibilityNodeInfo displayRoot(DshaAccessibilityService service, int display) {
+    return displayRoot(service, display, -1);
+  }
+
+  private static AccessibilityNodeInfo displayRoot(
+      DshaAccessibilityService service, int display, int expectedWindow) {
+    WINDOW_DIAGNOSTIC.set("ROOT_UNAVAILABLE");
     if (service == null) return null;
     if (android.os.Build.VERSION.SDK_INT < 30)
       return display == 0 ? service.getRootInActiveWindow() : null;
     var windows = service.getWindowsOnAllDisplays().get(display);
-    if (windows == null) return null;
-    AccessibilityNodeInfo result = null;
-    int selectedRank = -1;
+    if (windows == null || windows.isEmpty()) {
+      WINDOW_DIAGNOSTIC.set("NO_WINDOWS");
+      return null;
+    }
     try {
+      var candidates =
+          new java.util.ArrayList<com.deepseekharness.app.util.VirtualScreenWindowPolicy.Window>();
       for (var window : windows) {
-        if (display > 0
-            && window.getType()
-                != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue;
-        var root = window.getRoot();
-        if (root == null) continue;
-        int rank =
-            com.deepseekharness.app.util.VirtualScreenWindowPolicy.rank(
-                window.isFocused(), window.isActive());
-        if (display == 0
-            ? result == null || window.isActive() || window.isFocused()
-            : result == null || rank > selectedRank) {
-          if (result != null) result.recycle();
-          result = root;
-          selectedRank = rank;
-        } else root.recycle();
-        if (display == 0 && window.isActive()) break;
+        candidates.add(
+            new com.deepseekharness.app.util.VirtualScreenWindowPolicy.Window(
+                window.getDisplayId(),
+                window.getId(),
+                window.getLayer(),
+                window.getType()
+                    == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION,
+                window.isFocused(),
+                window.isActive()));
       }
+      int selected =
+          com.deepseekharness.app.util.VirtualScreenWindowPolicy.select(display, candidates);
+      if (selected < 0) {
+        WINDOW_DIAGNOSTIC.set("NO_UNIQUE_APPLICATION_WINDOW");
+        return null;
+      }
+      var window = windows.get(selected);
+      if (expectedWindow >= 0 && window.getId() != expectedWindow)
+        throw new TargetChangedException();
+      var root = window.getRoot();
+      if (root == null) {
+        WINDOW_DIAGNOSTIC.set("ROOT_UNAVAILABLE:window=" + window.getId() + ":display=" + display);
+        return null;
+      }
+      if (root.getWindowId() != window.getId()) {
+        root.recycle();
+        WINDOW_DIAGNOSTIC.set("WINDOW_ID_MISMATCH");
+        return null;
+      }
+      WINDOW_DIAGNOSTIC.set("READABLE:window=" + window.getId() + ":display=" + display);
+      return root;
     } finally {
       for (var window : windows)
         try {
@@ -307,7 +337,27 @@ public class DshaAccessibilityService extends AccessibilityService {
         } catch (Throwable ignored) {
         }
     }
-    return result;
+  }
+
+  /** One read-only retry of the same selected window; never accepts another app's tree. */
+  public static AccessibilityNodeInfo refreshVirtualRoot(
+      int displayId, AccessibilityNodeInfo previous) {
+    if (previous == null) return null;
+    var expected = identity(displayId, previous);
+    previous.refresh();
+    var root = displayRoot(instance, displayId, expected.windowId);
+    if (root != null && !expected.matches(identity(displayId, root))) {
+      root.recycle();
+      throw new TargetChangedException();
+    }
+    if (root == null) return null;
+    try {
+      validateActionRoot(displayId, root);
+      return root;
+    } catch (Throwable rejected) {
+      if (root != null) root.recycle();
+      throw rejected;
+    }
   }
 
   private static com.deepseekharness.app.util.ScreenTarget identity(
@@ -368,7 +418,7 @@ public class DshaAccessibilityService extends AccessibilityService {
   public static final class TargetChangedException extends IllegalStateException {
     private static final long serialVersionUID = 1L;
 
-    TargetChangedException() {
+    public TargetChangedException() {
       super("SCREEN_TARGET_CHANGED");
     }
   }

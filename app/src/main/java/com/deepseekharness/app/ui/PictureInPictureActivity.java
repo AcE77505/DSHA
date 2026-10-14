@@ -30,6 +30,11 @@ import com.deepseekharness.app.util.PictureInPicturePolicy;
 /** 仅供两种 DSH 网页预览使用；原生启动、配置和终端 Activity 不继承此类。 */
 public abstract class PictureInPictureActivity extends AppCompatActivity {
   private PictureInPictureFrame pictureFrame;
+  private final com.deepseekharness.app.util.BrowserPresentationState presentation =
+      new com.deepseekharness.app.util.BrowserPresentationState();
+  private int browserThemeColor;
+  private boolean restoredPresentation;
+  private boolean userHidden;
   private SharedPreferences picturePreferences;
   private boolean leavingForActivity;
   private int restoredViewportWidth, restoredViewportHeight;
@@ -125,6 +130,11 @@ public abstract class PictureInPictureActivity extends AppCompatActivity {
   @Override
   protected void onCreate(Bundle saved) {
     super.onCreate(saved);
+    restoredPresentation = saved != null;
+    presentation.restore(saved == null ? "FULL" : saved.getString("browser-presentation", "FULL"));
+    userHidden = saved != null && saved.getBoolean("browser-user-hidden", false);
+    if (showing(this)) presentation.picture(true);
+    browserThemeColor = getColor(R.color.surface);
     if (saved != null) {
       restoredViewportWidth = saved.getInt("pip-viewport-width");
       restoredViewportHeight = saved.getInt("pip-viewport-height");
@@ -157,6 +167,8 @@ public abstract class PictureInPictureActivity extends AppCompatActivity {
     android.view.View webpage = getLayoutInflater().inflate(layout, pictureFrame, false);
     pictureFrame.addView(webpage, new android.widget.FrameLayout.LayoutParams(-1, -1));
     super.setContentView(pictureFrame);
+    if (restoredPresentation) updatePresentationLayout();
+    else receivePresentationIntent();
     pictureFrame.addOnLayoutChangeListener(
         (view, l, t, r, b, oldL, oldT, oldR, oldB) -> refreshPictureInPicture());
   }
@@ -164,7 +176,8 @@ public abstract class PictureInPictureActivity extends AppCompatActivity {
   private boolean mayEnter() {
     KeyguardManager guard = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
     var controller = com.deepseekharness.app.core.HarnessController.get(this);
-    return pictureFrame != null
+    return presentation.mode() != com.deepseekharness.app.util.BrowserPresentationState.Mode.HIDDEN
+        && pictureFrame != null
         && !controller.isStopping()
         && !controller.isUserStopped()
         && controller.getWebGeneration() > 0
@@ -258,7 +271,98 @@ public abstract class PictureInPictureActivity extends AppCompatActivity {
 
   /** 返回原生启动页，不隐式进入画中画。 */
   protected final void leavePreview() {
-    returnToLauncher();
+    hideConversation();
+  }
+
+  protected final boolean conversationHidden() {
+    return presentation.mode() == com.deepseekharness.app.util.BrowserPresentationState.Mode.HIDDEN;
+  }
+
+  /** 隐藏和替换入口先撤销排队路由及鉴权；浏览器实例继续保留。 */
+  protected void cancelConversationRequests() {}
+
+  protected final void hideConversation() {
+    if (isFinishing() || isDestroyed()) return;
+    presentation.hide();
+    userHidden = true;
+    leavingForActivity = true;
+    cancelConversationRequests();
+    if (pictureFrame != null && !showing(this)) pictureFrame.resumeViewport();
+    refreshPictureInPicture();
+    var input =
+        (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+    if (input != null && pictureFrame != null)
+      input.hideSoftInputFromWindow(pictureFrame.getWindowToken(), 0);
+    // 保留任务及 ViewModel；再次进入接管同一页面、草稿和浏览器会话。
+    if (showing(this)) {
+      // 将同一 singleTask 从 PiP 展开后移到后台，不能 finish 销毁当前网页。
+      startActivity(
+          new Intent(this, getClass())
+              .addFlags(
+                  Intent.FLAG_ACTIVITY_NEW_TASK
+                      | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                      | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+              .putExtra(BrowserConversationRoute.MODE, "HIDDEN"));
+    } else hideConversationTask();
+  }
+
+  private void hideConversationTask() {
+    if (!moveTaskToBack(true))
+      startActivity(
+          new Intent(this, MainActivity.class)
+              .addFlags(
+                  Intent.FLAG_ACTIVITY_NEW_TASK
+                      | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                      | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+  }
+
+  protected final void receivePresentationIntent() {
+    String requested = getIntent().getStringExtra(BrowserConversationRoute.MODE);
+    if ("HIDDEN".equals(requested)) {
+      presentation.hide();
+      userHidden = true;
+      leavingForActivity = true;
+      cancelConversationRequests();
+      updatePresentationLayout();
+      if (!showing(this)) hideConversationTask();
+      return;
+    }
+    if (requested != null || conversationHidden()) showConversation();
+    else updatePresentationLayout();
+  }
+
+  private void showConversation() {
+    presentation.show();
+    userHidden = false;
+    leavingForActivity = false;
+    if (getIntent() != null) getIntent().putExtra(BrowserConversationRoute.MODE, "FULL");
+    synchronizePictureViewport();
+    updatePresentationLayout();
+    WebFullscreenUi.applySystemBars(this);
+    android.view.View content = findViewById(android.R.id.content);
+    if (content != null) ViewCompat.requestApplyInsets(content);
+    refreshPictureInPicture();
+  }
+
+  public final void applyBrowserTheme(int color) {
+    browserThemeColor = color;
+    updatePresentationLayout();
+  }
+
+  public final int browserThemeColor() {
+    return browserThemeColor;
+  }
+
+  private void updatePresentationLayout() {
+    if (pictureFrame != null) pictureFrame.setBackgroundColor(browserThemeColor);
+  }
+
+  /** A reused task can return full screen before its PiP mode callback is delivered. */
+  private void synchronizePictureViewport() {
+    if (pictureFrame == null) return;
+    boolean inPicture = showing(this);
+    pictureFrame.setCompact(inPicture);
+    if (!inPicture) pictureFrame.resumeViewport();
   }
 
   private void returnToLauncher() {
@@ -292,8 +396,11 @@ public abstract class PictureInPictureActivity extends AppCompatActivity {
 
   @Override
   public void onPictureInPictureModeChanged(boolean inPicture, Configuration config) {
+    presentation.picture(inPicture);
+    updatePresentationLayout();
     if (pictureFrame != null) pictureFrame.setCompact(inPicture);
     super.onPictureInPictureModeChanged(inPicture, config);
+    WebFullscreenUi.applySystemBars(this);
     if (inPicture && pictureFrame != null) {
       pictureGeneration =
           com.deepseekharness.app.core.HarnessController.get(this).getWebGeneration();
@@ -306,11 +413,17 @@ public abstract class PictureInPictureActivity extends AppCompatActivity {
     pictureHandler.removeCallbacks(pictureMonitor);
     if (inPicture) pictureHandler.post(pictureMonitor);
     refreshPictureInPicture();
+    if (!inPicture && conversationHidden() && userHidden) hideConversationTask();
   }
 
   @Override
   protected void onStart() {
     super.onStart();
+    if (conversationHidden() && !userHidden) {
+      presentation.show();
+      updatePresentationLayout();
+      WebFullscreenUi.applySystemBars(this);
+    }
     if (showing(this)) {
       pictureHandler.removeCallbacks(pictureMonitor);
       pictureHandler.post(pictureMonitor);
@@ -319,22 +432,31 @@ public abstract class PictureInPictureActivity extends AppCompatActivity {
 
   @Override
   protected void onStop() {
+    if (!pictureInPictureActiveOrTransitioning()) {
+      presentation.hide();
+      cancelConversationRequests();
+    }
     pictureHandler.removeCallbacks(pictureMonitor);
     super.onStop();
   }
 
   @Override
   protected void onNewIntent(Intent intent) {
+    cancelConversationRequests();
     super.onNewIntent(intent);
     setIntent(intent);
+    if (BrowserConversationRoute.current(
+        intent, com.deepseekharness.app.core.HarnessController.get(this).getReadyWebPageIdentity()))
+      receivePresentationIntent();
   }
 
   @Override
   protected void onResume() {
     super.onResume();
-    leavingForActivity = false;
-    if (pictureFrame != null) pictureFrame.resumeViewport();
+    leavingForActivity = conversationHidden();
+    synchronizePictureViewport();
     refreshPictureInPicture();
+    if (conversationHidden() && userHidden && !showing(this)) hideConversationTask();
   }
 
   /** 文件选择、系统浏览器、恢复页等由应用主动打开时，不留下多余的小窗。 */
@@ -393,6 +515,8 @@ public abstract class PictureInPictureActivity extends AppCompatActivity {
 
   @Override
   protected void onSaveInstanceState(Bundle out) {
+    out.putString("browser-presentation", presentation.mode().name());
+    out.putBoolean("browser-user-hidden", userHidden);
     if (pictureFrame != null) {
       out.putInt("pip-viewport-width", pictureFrame.viewportWidth());
       out.putInt("pip-viewport-height", pictureFrame.viewportHeight());

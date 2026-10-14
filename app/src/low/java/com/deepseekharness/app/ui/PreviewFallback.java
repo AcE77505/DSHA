@@ -25,10 +25,13 @@ final class PreviewFallback {
 
   static boolean open(Activity activity, String url, String cookie) {
     try {
-      activity.startActivity(
+      Intent target =
           new Intent(activity, GeckoPreviewActivity.class)
               .putExtra("url", url)
-              .putExtra("cookie", cookie));
+              .putExtra("cookie", cookie)
+              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+      BrowserConversationRoute.copy(activity.getIntent(), target);
+      activity.startActivity(target);
       activity.finish();
       return true;
     } catch (RuntimeException error) {

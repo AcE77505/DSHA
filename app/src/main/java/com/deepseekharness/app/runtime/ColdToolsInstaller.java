@@ -175,34 +175,14 @@ final class ColdToolsInstaller {
   }
 
   private static java.util.List<com.deepseekharness.app.util.ColdInstallPlan.Mode> modes(
-      ProotBootstrap boot, boolean configured) {
+      ProotBootstrap boot, boolean configured) throws IOException {
     var settings = boot.hostPorts().settings();
-    ContainerRuntime.Proroot candidate =
-        new ContainerRuntime.Proroot(
-            boot.ctx, ContainerRuntime.Proroot.defaultDir(boot.ctx), settings.staticLoader);
-    boolean available = android.os.Build.VERSION.SDK_INT >= 26 && candidate.available();
-    boolean isolated = IsolatedInstallProcess.supported(boot.ctx);
-    // 自动选择只用于已经完成 dpkg 的签名覆盖层及独立首次候选；旧环境/重建保持用户选择。
-    boolean automatic =
-        configured && boot.coldCandidate != null && boot.hostPorts().preferFastColdMode();
-    boolean preferProroot = !boot.forceProot && (settings.proroot || automatic);
-    boot.hostPorts()
-        .record(
-            "CAPABILITY",
-            "proroot="
-                + available
-                + " isolation="
-                + isolated
-                + " preferProroot="
-                + preferProroot
-                + " automaticCold="
-                + automatic
-                + " supervisor="
-                + IsolatedInstallProcess.sessionLauncher(boot.ctx)
-                + "\n"
-                + (available ? "" : candidate.unavailableReason()));
+    ContainerRuntime selected = boot.packageRuntime();
     return com.deepseekharness.app.util.ColdInstallPlan.modes(
-        preferProroot, available, isolated, settings.disableProotSeccomp);
+        "bxroot".equals(selected.id()),
+        "bxroot".equals(selected.id()),
+        IsolatedInstallProcess.supported(boot.ctx),
+        settings.disableProotSeccomp);
   }
 
   private static String packageFingerprint(
@@ -231,21 +211,24 @@ final class ColdToolsInstaller {
       BoundedGuestSessions.Operation coldRecord = null;
       try {
         ContainerRuntime rt =
-            "proroot".equals(mode.runtime)
-                ? new ContainerRuntime.Proroot(
-                    boot.ctx,
-                    ContainerRuntime.Proroot.defaultDir(boot.ctx),
-                    mode.staticLoader(boot.hostPorts().settings().staticLoader))
-                : new ContainerRuntime.Proot(boot.ctx, boot.findNativeLib("libproot.so"));
+            "bxroot".equals(mode.runtime)
+                ? new BxrootRuntime(boot.ctx)
+                : EngineSpec.select(
+                        boot.ctx,
+                        new RuntimeHostPorts.Settings(
+                            boot.hostPorts().settings().dnsMode, "proot", false, mode.noSeccomp),
+                        false)
+                    .runtime;
         boolean isolated = IsolatedInstallProcess.supported(boot.ctx);
         coldRecord = isolated ? BoundedGuestSessions.begin(boot.ctx.getFilesDir()) : null;
         if (boot.coldCandidate != null)
           boot.coldCandidate.beforeLaunch(coldRecord == null ? null : coldRecord.id());
         var launch =
             boot.launch(rt).isolated(isolated).record(coldRecord).coldTrace(true).coldMode(mode);
-        if ("proroot".equals(mode.runtime))
-          launch.environment(java.util.Map.of("PROROOT_VERBOSE", "1"));
+
         process = boot.startRootfs(command, launch.build());
+        if (!mode.runtime.equals(OwnedGuestProof.modeOf(process)))
+          throw new IOException("COLD_FROZEN_ENGINE_CHANGED_NO_REPLAY");
         String diagnosticId = java.util.UUID.randomUUID().toString();
         long began = android.os.SystemClock.elapsedRealtime();
         var result =

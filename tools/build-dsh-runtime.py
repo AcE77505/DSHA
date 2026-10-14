@@ -38,9 +38,40 @@ PATCHES = {'@deepseek-ai/dsh-fs-local/lib/index.js': 'publishExclusive',
            '@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js': 'publishSessionExclusive',
            '@deepseek-ai/dsh-attachment-local/lib/index.js': 'publishAttachmentExclusive'}
 
+def destructive_policy_files(assets=None):
+    assets = HOOKS.parent if assets is None else Path(assets)
+    for name in ('destructive.js', 'workdir.js'):
+        canonical = assets / 'builtin-plugins/dsh-destructive-guard/lib' / name
+        copy = assets / 'destructive-policy' / name
+        if canonical.read_bytes() != copy.read_bytes():
+            raise ValueError('DESTRUCTIVE_POLICY_COPY_CHANGED: ' + name)
+    files = {
+        'package.json': assets / 'destructive-policy/package.json',
+        'index.js': assets / 'destructive-policy/index.js',
+        'destructive.js': assets / 'destructive-policy/destructive.js',
+        'workdir.js': assets / 'destructive-policy/workdir.js',
+    }
+    # These files are installed from signed APK assets before any managed patch
+    # runs. Keeping a second copy inside the gzip changes the complete archive
+    # identity and needlessly duplicates the fixed rescue runtime in the APK.
+    # Refuse to build if any install is missing, redirected, executable or shadowed.
+    installs = json.loads((assets / 'managed-runtime-inputs.json').read_text(encoding='utf-8'))['installs']
+    for name in files:
+        expected = dict(asset='destructive-policy/' + name,
+                        target=PREFIX + '/node_modules/dsha-destructive-policy/' + name,
+                        executable=False)
+        matches = [row for row in installs if row.get('target') == expected['target']]
+        if matches != [expected]:
+            raise ValueError('DESTRUCTIVE_POLICY_MANAGED_INSTALL: ' + name)
+    return files
+
 
 def recipe_inputs():
     paths = [Path(__file__), Path(__file__).with_name('source_text.py'), LOCK_ROOT / 'package.json', LOCK_ROOT / 'package-lock.json']
+    paths += list(destructive_policy_files().values())
+    paths.append(HOOKS.parent / 'managed-runtime-inputs.json')
+    paths += [Path(__file__).with_name('prepare-destructive-policy.py')]
+    paths += [HOOKS.parent / 'builtin-plugins/dsh-destructive-guard/lib' / name for name in ('destructive.js', 'workdir.js')]
     paths += [directory / name for directory in (HOOKS, SESSION_HOOKS, COMBO_HOOKS) for name in ('index.js', 'package.json')]
     paths.append(COMBO_PATCH)
     paths.append(DEEPSEEK_MESSAGES_PATCH)
@@ -566,6 +597,7 @@ def build(source, output, version):
         raise ValueError('DeepSeek Messages 补丁没有锁定到本次 dsh 依赖树')
     if not (source / PACKAGE / 'lib/bin.js').is_file():
         raise ValueError('npm 包没有编译后的 dsh 入口')
+    destructive_policy_files()
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + '.tmp')
     count, size, binaries = 0, 0, []
@@ -650,6 +682,8 @@ def build(source, output, version):
                         item.size, item.mode = len(content), 0o644
                         archive.addfile(item, io.BytesIO(content))
                         count += 1; size += len(content)
+                # dsha-destructive-policy is the signed managed overlay validated
+                # by recipe_inputs(), not another copy inside this base archive.
                 # 一些社区预设仍使用 0.1.5 的工作流包名。只在 alpha.2 新包真实存在且
                 # 旧包不存在时提供受管别名，不改写用户插件源码，也不会遮蔽用户安装的旧包。
                 if (source / WORKFLOW_PTC).is_dir() and not (source / LEGACY_WORKFLOW_PTC).exists():
